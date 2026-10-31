@@ -1,0 +1,27 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+!.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+# SQLite Databases & Storage
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+/data/
+backend/data/
+!docs/data/
+
+# Temporary Test Profiles & Logs
+tests/browser_ui_profile_*
+*.log
+
+
