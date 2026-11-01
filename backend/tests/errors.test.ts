@@ -15,7 +15,7 @@ describe('Centralized Error Handling & Security Middleware', () => {
     PORT: 5000,
     NODE_ENV: 'test',
     API_PREFIX: '/api/v1',
-    CORS_ORIGIN: 'http://localhost:5173',
+    CORS_ORIGIN: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174',
     DB_PATH: ':memory:',
     JWT_SECRET: 'test-secret-key-that-is-at-least-32-chars-long!',
     JWT_EXPIRES_IN: '24h',
@@ -139,5 +139,47 @@ describe('Centralized Error Handling & Security Middleware', () => {
     assert.equal(res.status, 403);
     assert.equal(res.body.success, false);
     assert.equal(res.body.error.code, 'CORS_REJECTED');
+  });
+
+  test('CORS Policy: Allows explicitly configured development origins (localhost:5174 and 127.0.0.1:5174)', async () => {
+    const app = createApp({ db, config: baseConfig });
+
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'http://localhost:5174',
+      'http://127.0.0.1:5174',
+    ];
+
+    for (const origin of allowedOrigins) {
+      const res = await request(app)
+        .get('/api/v1/health')
+        .set('Origin', origin);
+
+      assert.equal(res.status, 200, `Origin ${origin} should be allowed with 200 OK`);
+      assert.equal(res.headers['access-control-allow-origin'], origin);
+      assert.equal(res.headers['access-control-allow-credentials'], 'true');
+    }
+  });
+
+  test('CORS Preflight: OPTIONS request succeeds with 204 No Content for authenticated POST endpoints', async () => {
+    const app = createApp({ db, config: baseConfig });
+
+    const testOrigins = ['http://localhost:5174', 'http://127.0.0.1:5174'];
+
+    for (const origin of testOrigins) {
+      const res = await request(app)
+        .options('/api/v1/ngos')
+        .set('Origin', origin)
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'authorization, content-type');
+
+      assert.equal(res.status, 204, `Preflight for ${origin} must return 204 No Content`);
+      assert.equal(res.headers['access-control-allow-origin'], origin);
+      assert.equal(res.headers['access-control-allow-credentials'], 'true');
+      assert.ok(res.headers['access-control-allow-methods'].includes('POST'));
+      assert.ok(res.headers['access-control-allow-headers'].toLowerCase().includes('authorization'));
+      assert.ok(res.headers['access-control-allow-headers'].toLowerCase().includes('content-type'));
+    }
   });
 });

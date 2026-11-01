@@ -5,10 +5,12 @@ import {
   AlertTriangle,
   Clock,
   LifeBuoy,
+  Compass,
 } from 'lucide-react';
 import { Incident, IncidentSeverity } from '../../types/incident';
 import { DuplicateCandidate } from '../../types/duplicate';
 import { IncidentEvent } from '../../types/event';
+import { NgoRecommendationDesk } from '../Recommendation/NgoRecommendationDesk';
 
 interface IncidentDetailTriageProps {
   incidents: Incident[];
@@ -19,6 +21,8 @@ interface IncidentDetailTriageProps {
   onVerifyIncident: (id: number) => void;
   onEscalateSeverity: (id: number, sev: IncidentSeverity) => void;
   onNavigateToResources: () => void;
+  coordinatorToken?: string | null;
+  onNavigateToNgos?: (ngoId?: string) => void;
 }
 
 export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
@@ -30,6 +34,8 @@ export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
   onVerifyIncident,
   onEscalateSeverity,
   onNavigateToResources,
+  coordinatorToken,
+  onNavigateToNgos,
 }) => {
   const sevBadge =
     selectedIncident.severity === 'CRITICAL'
@@ -257,13 +263,24 @@ export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
 
             {/* Dispatch Relief Shortcut */}
             <div className="pt-3 border-t border-slate-100 space-y-2">
-              <span className="text-xs font-medium text-slate-700 block">Logistics Allocation</span>
+              <span className="text-xs font-medium text-slate-700 block">Logistics & NGO Dispatch</span>
               <button
                 onClick={onNavigateToResources}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium py-2 rounded text-xs transition flex items-center justify-center space-x-2 border border-slate-300 shadow-2xs cursor-pointer"
+              >
+                <LifeBuoy className="w-4 h-4 text-slate-600" />
+                <span>Internal Resources Desk ➔</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  const el = document.getElementById('ngo-recommendation-section');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
                 className="w-full bg-teal-800 hover:bg-teal-900 text-white font-medium py-2.5 rounded text-xs transition flex items-center justify-center space-x-2 shadow-xs cursor-pointer"
               >
-                <LifeBuoy className="w-4 h-4" />
-                <span>Open Resource Allocation Desk ➔</span>
+                <Compass className="w-4 h-4 text-teal-300" />
+                <span>Match Partner NGOs (Phase 4.5) ↓</span>
               </button>
             </div>
           </div>
@@ -296,6 +313,21 @@ export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
             )}
           </div>
         </div>
+      </div>
+
+      {/* SECTION: NGO DISPATCH RECOMMENDATION DESK (PHASE 4.5) */}
+      <div id="ngo-recommendation-section">
+        <NgoRecommendationDesk
+          incidentId={selectedIncident.id}
+          incidentTitle={selectedIncident.title}
+          incidentCategory={selectedIncident.category}
+          incidentSeverity={selectedIncident.severity}
+          incidentLatitude={selectedIncident.latitude}
+          incidentLongitude={selectedIncident.longitude}
+          incidentDistrict={selectedIncident.landmark}
+          coordinatorToken={coordinatorToken}
+          onInspectNgo={onNavigateToNgos}
+        />
       </div>
     </div>
   );

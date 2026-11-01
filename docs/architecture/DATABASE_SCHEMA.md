@@ -1,5 +1,8 @@
 # Database Schema & Data Integrity — SURAKSHA GRID
 ### Relational SQLite Architecture (Engine: `better-sqlite3`)
+**Document Version:** 2.1.0  
+**Schema Version:** Migration 003 Applied  
+**Last Updated:** 2026-11-01  
 
 ---
 
@@ -12,6 +15,9 @@ erDiagram
     USERS ||--o{ INCIDENT_EVENTS : "actor_id"
     USERS ||--o{ DUPLICATE_CANDIDATES : "reviewed_by"
     USERS ||--o{ NGOS : "verified_by"
+    USERS ||--o{ NGO_VERIFICATION_RECORDS : "verified_by"
+    USERS ||--o{ NGO_EQUIPMENT_INVENTORY : "inspected_by"
+    USERS ||--o{ NGO_AVAILABILITY_LOGS : "recorded_by"
     
     INCIDENTS ||--o{ ASSIGNMENTS : "incident_id (ON DELETE RESTRICT)"
     INCIDENTS ||--o{ INCIDENT_EVENTS : "incident_id (ON DELETE CASCADE)"
@@ -20,9 +26,16 @@ erDiagram
 
     RESOURCES ||--o{ ASSIGNMENTS : "resource_id (ON DELETE RESTRICT)"
 
-    NGOS ||--o{ NGO_EQUIPMENT : "ngo_id (ON DELETE CASCADE)"
-    NGOS ||--o{ NGO_TASK_ASSIGNMENTS : "ngo_id (ON DELETE CASCADE)"
-    PREPAREDNESS_TASKS ||--o{ NGO_TASK_ASSIGNMENTS : "task_id (ON DELETE CASCADE)"
+    NGOS ||--o{ NGO_VERIFICATION_RECORDS : "ngo_id (ON DELETE CASCADE)"
+    NGOS ||--o{ NGO_CAPABILITIES : "ngo_id (ON DELETE CASCADE)"
+    CAPABILITIES ||--o{ NGO_CAPABILITIES : "capability_id (ON DELETE RESTRICT)"
+
+    NGOS ||--o{ NGO_EQUIPMENT_INVENTORY : "ngo_id (ON DELETE CASCADE)"
+    EQUIPMENT_CATALOGUE ||--o{ NGO_EQUIPMENT_INVENTORY : "equipment_type_id (ON DELETE RESTRICT)"
+    NGO_OPERATING_AREAS ||--o{ NGO_EQUIPMENT_INVENTORY : "operating_area_id (ON DELETE SET NULL)"
+
+    NGOS ||--o{ NGO_AVAILABILITY_LOGS : "ngo_id (ON DELETE RESTRICT)"
+    NGOS ||--o{ NGO_OPERATING_AREAS : "ngo_id (ON DELETE CASCADE)"
 
     USERS {
         INTEGER id PK
@@ -107,92 +120,99 @@ erDiagram
     }
 
     NGOS {
-        INTEGER id PK
-        TEXT code UK
+        TEXT id PK
         TEXT name
-        TEXT registration_number
-        TEXT operating_district
-        TEXT operating_circles
-        TEXT contact_person
-        TEXT contact_phone
-        TEXT contact_email
-        INTEGER active_volunteers
-        INTEGER certified_helmsmen
-        TEXT specializations
-        TEXT verification_status
-        INTEGER verified_by FK
-        TEXT last_availability_checkin
-        TEXT last_verified_at
-        TEXT created_at
-        TEXT updated_at
-    }
-
-    NGO_EQUIPMENT {
-        INTEGER id PK
-        INTEGER ngo_id FK
-        TEXT equipment_type
-        TEXT name
-        INTEGER quantity
-        TEXT operational_condition
-        TEXT last_inspection_date
-        REAL latitude
-        REAL longitude
-        TEXT storage_landmark
-        TEXT created_at
-        TEXT updated_at
-    }
-
-    PREPAREDNESS_TASKS {
-        INTEGER id PK
-        INTEGER day_number
-        TEXT phase
-        TEXT title
+        TEXT legal_name
+        TEXT registration_reference
         TEXT description
-        TEXT required_capability
-        INTEGER is_mandatory
-        TEXT created_at
-    }
-
-    NGO_TASK_ASSIGNMENTS {
-        INTEGER id PK
-        INTEGER task_id FK
-        INTEGER ngo_id FK
-        TEXT status
-        TEXT completion_notes
-        TEXT proof_url
+        TEXT primary_contact_name
+        TEXT primary_contact_phone
+        TEXT primary_contact_email
+        TEXT verification_status
+        INTEGER is_simulated
         INTEGER verified_by FK
-        TEXT completed_at
         TEXT verified_at
         TEXT created_at
+        TEXT updated_at
     }
 
-    HISTORICAL_METRICS {
-        INTEGER id PK
-        TEXT source_organization
-        TEXT source_document
-        TEXT publication_date
-        TEXT geographic_scope
-        TEXT metric_name
-        REAL metric_value
-        TEXT metric_unit
-        TEXT data_tier
-        TEXT methodology_notes
+    CAPABILITIES {
+        TEXT id PK
+        TEXT name UK
+        TEXT category
+        TEXT description
         TEXT created_at
     }
 
-    RIVER_OBSERVATIONS {
+    NGO_CAPABILITIES {
         INTEGER id PK
-        TEXT station_code
-        TEXT station_name
-        TEXT river_name
+        TEXT ngo_id FK
+        TEXT capability_id FK
+        TEXT certification_level
+        TEXT certified_by
+        TEXT certified_at
+        TEXT expires_at
+        INTEGER is_verified
+        TEXT created_at
+    }
+
+    EQUIPMENT_CATALOGUE {
+        TEXT id PK
+        TEXT name
+        TEXT category
+        TEXT description
+        TEXT unit_of_measure
+        INTEGER is_critical
+        TEXT created_at
+    }
+
+    NGO_EQUIPMENT_INVENTORY {
+        INTEGER id PK
+        TEXT ngo_id FK
+        TEXT equipment_type_id FK
+        INTEGER total_quantity
+        INTEGER available_quantity
+        INTEGER reserved_quantity
+        TEXT operational_condition
+        TEXT inspection_status
+        TEXT storage_location_name
+        REAL storage_latitude
+        REAL storage_longitude
+        TEXT last_inspected_at
+        INTEGER inspected_by FK
+        INTEGER is_simulated
+        TEXT created_at
+        TEXT updated_at
+    }
+
+    NGO_AVAILABILITY_LOGS {
+        INTEGER id PK
+        TEXT ngo_id FK
+        TEXT status
+        INTEGER available_personnel_count
+        INTEGER certified_helmsmen_count
+        TEXT reporting_person_name
+        TEXT reporting_person_phone
+        TEXT operational_notes
+        TEXT checkin_timestamp
+        TEXT valid_until
+        INTEGER recorded_by FK
+        INTEGER is_simulated
+        TEXT created_at
+    }
+
+    NGO_OPERATING_AREAS {
+        INTEGER id PK
+        TEXT ngo_id FK
+        TEXT state
         TEXT district
-        REAL water_level
-        REAL warning_level
-        REAL danger_level
-        REAL highest_flood_level
-        TEXT observation_timestamp
-        TEXT source_organization
-        TEXT data_tier
+        TEXT revenue_circle
+        TEXT administrative_scope
+        TEXT geographic_identifier
+        TEXT depot_location_name
+        REAL depot_latitude
+        REAL depot_longitude
+        INTEGER is_primary_depot
         TEXT created_at
     }
 ```
@@ -350,123 +370,266 @@ CREATE INDEX idx_dup_status ON duplicate_candidates(status);
 
 ---
 
-## 4. Proposed Migration 002 (NGO Network & Preparedness Architecture)
+## 4. Implemented NGO Network & Equipment Tracking (Migration 002)
 
-To be implemented in Phase 4.1 without altering existing working tables:
+Established in Phase 4.1. Provides normalized foundations for civil society mobilization, capability mapping, equipment inventory tracking, and time-sensitive availability verification.
 
+### Table 7: `ngos` (Civil Society Registry)
 ```sql
--- 1. ngos table
-CREATE TABLE IF NOT EXISTS ngos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT NOT NULL UNIQUE,
+CREATE TABLE ngos (
+    id TEXT PRIMARY KEY,                       -- UUIDv4 or unique code
     name TEXT NOT NULL,
-    registration_number TEXT,
-    operating_district TEXT NOT NULL DEFAULT 'Nagaon',
-    operating_circles TEXT NOT NULL DEFAULT 'Kampur',
-    contact_person TEXT NOT NULL,
-    contact_phone TEXT NOT NULL,
-    contact_email TEXT,
-    active_volunteers INTEGER NOT NULL DEFAULT 0 CHECK (active_volunteers >= 0),
-    certified_helmsmen INTEGER NOT NULL DEFAULT 0 CHECK (certified_helmsmen >= 0),
-    specializations TEXT NOT NULL, -- Comma-separated or JSON array of standard specializations
-    verification_status TEXT NOT NULL DEFAULT 'PENDING_VERIFICATION' CHECK (verification_status IN (
-        'PENDING_VERIFICATION', 'VERIFIED_ACTIVE', 'INACTIVE_STALE', 'SUSPENDED'
-    )),
+    legal_name TEXT,
+    registration_reference TEXT,              -- Society Reg No, Trust Deed, or Darpan ID
+    description TEXT,
+    primary_contact_name TEXT NOT NULL,
+    primary_contact_phone TEXT NOT NULL,
+    primary_contact_email TEXT,
+    verification_status TEXT NOT NULL DEFAULT 'DOCUMENTED_IN_DDMP' CHECK (
+        verification_status IN (
+            'DOCUMENTED_IN_DDMP',
+            'IDENTITY_VERIFIED',
+            'CURRENTLY_OPERATIONAL',
+            'AVAILABILITY_CONFIRMED',
+            'EQUIPMENT_INDEPENDENTLY_VERIFIED'
+        )
+    ),
+    is_simulated INTEGER NOT NULL DEFAULT 1 CHECK (is_simulated IN (0, 1)),
     verified_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    last_availability_checkin TEXT,
-    last_verified_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_ngos_district ON ngos(operating_district);
-CREATE INDEX IF NOT EXISTS idx_ngos_status ON ngos(verification_status);
-
--- 2. ngo_equipment table
-CREATE TABLE IF NOT EXISTS ngo_equipment (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ngo_id INTEGER NOT NULL REFERENCES ngos(id) ON DELETE CASCADE,
-    equipment_type TEXT NOT NULL CHECK (equipment_type IN (
-        'INFLATABLE_MOTORBOAT', 'COUNTRY_BOAT', 'WATER_PURIFIER_RO', 'TRAUMA_KIT', 'MOBILE_KITCHEN', 'HIGH_CAPACITY_PUMP', 'LIFEJACKET_SET'
-    )),
-    name TEXT NOT NULL,
-    quantity INTEGER NOT NULL CHECK (quantity > 0),
-    operational_condition TEXT NOT NULL DEFAULT 'OPERATIONAL' CHECK (operational_condition IN (
-        'OPERATIONAL', 'STANDBY', 'REPAIR_REQUIRED'
-    )),
-    last_inspection_date TEXT NOT NULL,
-    latitude REAL,
-    longitude REAL,
-    storage_landmark TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_ngo_eqp_ngo ON ngo_equipment(ngo_id);
-CREATE INDEX IF NOT EXISTS idx_ngo_eqp_type ON ngo_equipment(equipment_type);
-
--- 3. preparedness_tasks table
-CREATE TABLE IF NOT EXISTS preparedness_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 7),
-    phase TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    required_capability TEXT,
-    is_mandatory INTEGER NOT NULL DEFAULT 1 CHECK (is_mandatory IN (0, 1)),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_prep_day ON preparedness_tasks(day_number);
-
--- 4. ngo_task_assignments table
-CREATE TABLE IF NOT EXISTS ngo_task_assignments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL REFERENCES preparedness_tasks(id) ON DELETE CASCADE,
-    ngo_id INTEGER NOT NULL REFERENCES ngos(id) ON DELETE CASCADE,
-    status TEXT NOT NULL DEFAULT 'ASSIGNED' CHECK (status IN (
-        'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'VERIFIED_BY_COORDINATOR'
-    )),
-    completion_notes TEXT,
-    proof_url TEXT,
-    verified_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    completed_at TEXT,
     verified_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    CONSTRAINT uq_ngo_task UNIQUE (task_id, ngo_id)
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    deleted_at TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_task_assign_ngo ON ngo_task_assignments(ngo_id);
-CREATE INDEX IF NOT EXISTS idx_task_assign_status ON ngo_task_assignments(status);
-
--- 5. historical_metrics table
-CREATE TABLE IF NOT EXISTS historical_metrics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_organization TEXT NOT NULL,
-    source_document TEXT NOT NULL,
-    publication_date TEXT NOT NULL,
-    geographic_scope TEXT NOT NULL,
-    metric_name TEXT NOT NULL,
-    metric_value REAL NOT NULL,
-    metric_unit TEXT NOT NULL,
-    data_tier TEXT NOT NULL CHECK (data_tier IN ('VERIFIED', 'DERIVED', 'SIMULATED')),
-    methodology_notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_hist_source ON historical_metrics(source_organization, publication_date);
-CREATE INDEX IF NOT EXISTS idx_hist_metric ON historical_metrics(metric_name);
-
--- 6. river_observations table
-CREATE TABLE IF NOT EXISTS river_observations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    station_code TEXT NOT NULL,
-    station_name TEXT NOT NULL,
-    river_name TEXT NOT NULL,
-    district TEXT NOT NULL,
-    water_level REAL NOT NULL,
-    warning_level REAL NOT NULL,
-    danger_level REAL NOT NULL,
-    highest_flood_level REAL NOT NULL,
-    observation_timestamp TEXT NOT NULL,
-    source_organization TEXT NOT NULL DEFAULT 'CWC',
-    data_tier TEXT NOT NULL CHECK (data_tier IN ('VERIFIED', 'DERIVED', 'SIMULATED')),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_river_station ON river_observations(station_code, observation_timestamp);
+CREATE INDEX idx_ngos_verification ON ngos(verification_status);
+CREATE INDEX idx_ngos_simulated ON ngos(is_simulated);
+CREATE INDEX idx_ngos_name ON ngos(name);
+CREATE INDEX idx_ngos_active ON ngos(deleted_at) WHERE deleted_at IS NULL;
 ```
+
+### Table 7b: `ngo_verification_records` (Normalized Multi-Dimensional Verification Ledger)
+```sql
+CREATE TABLE ngo_verification_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ngo_id TEXT NOT NULL REFERENCES ngos(id) ON DELETE CASCADE,
+    dimension TEXT NOT NULL CHECK (
+        dimension IN (
+            'DOCUMENTED_IN_DDMP',
+            'IDENTITY_VERIFIED',
+            'CURRENTLY_OPERATIONAL',
+            'AVAILABILITY_CONFIRMED',
+            'EQUIPMENT_INDEPENDENTLY_VERIFIED'
+        )
+    ),
+    is_verified INTEGER NOT NULL DEFAULT 1 CHECK (is_verified IN (0, 1)),
+    verified_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    verified_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    valid_until TEXT,
+    evidence_reference TEXT,
+    notes TEXT,
+    is_current INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX idx_ngo_verif_ngo ON ngo_verification_records(ngo_id);
+CREATE INDEX idx_ngo_verif_dim ON ngo_verification_records(dimension, is_current);
+CREATE UNIQUE INDEX uq_ngo_verif_current ON ngo_verification_records(ngo_id, dimension) WHERE is_current = 1;
+```
+
+### Table 8: `capabilities` (Standard Capabilities Catalogue)
+```sql
+CREATE TABLE capabilities (
+    id TEXT PRIMARY KEY,                       -- Unique capability key
+    name TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL CHECK (
+        category IN (
+            'RESCUE_OPERATIONS',
+            'MEDICAL_HEALTH',
+            'WATER_SANITATION',
+            'SHELTER_RELIEF',
+            'LOGISTICS_SUPPLY',
+            'COMMUNITY_PREPAREDNESS'
+        )
+    ),
+    description TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX idx_capabilities_category ON capabilities(category);
+```
+
+### Table 9: `ngo_capabilities` (Normalized NGO Capability Association)
+```sql
+CREATE TABLE ngo_capabilities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ngo_id TEXT NOT NULL REFERENCES ngos(id) ON DELETE CASCADE,
+    capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE RESTRICT,
+    certification_level TEXT NOT NULL DEFAULT 'BASIC' CHECK (
+        certification_level IN ('BASIC', 'INTERMEDIATE', 'ADVANCED', 'SPECIALIST')
+    ),
+    certified_by TEXT,
+    certified_at TEXT,
+    expires_at TEXT,
+    is_verified INTEGER NOT NULL DEFAULT 0 CHECK (is_verified IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CONSTRAINT uq_ngo_capability UNIQUE (ngo_id, capability_id)
+);
+CREATE INDEX idx_ngo_cap_ngo ON ngo_capabilities(ngo_id);
+CREATE INDEX idx_ngo_cap_capability ON ngo_capabilities(capability_id);
+```
+
+### Table 10: `equipment_catalogue` (Master Equipment Catalogue)
+```sql
+CREATE TABLE equipment_catalogue (
+    id TEXT PRIMARY KEY,                       -- e.g. 'INFLATABLE_BOAT', 'LIFEJACKET'
+    name TEXT NOT NULL,
+    category TEXT NOT NULL CHECK (
+        category IN (
+            'RESCUE_WATERCRAFT',
+            'LIFE_SAFETY',
+            'MEDICAL_FIRST_AID',
+            'WATER_SANITATION',
+            'SHELTER_LOGISTICS',
+            'COMMUNICATIONS',
+            'POWER_DEWATERING',
+            'OTHER'
+        )
+    ),
+    description TEXT,
+    unit_of_measure TEXT NOT NULL DEFAULT 'UNITS',
+    is_critical INTEGER NOT NULL DEFAULT 0 CHECK (is_critical IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX idx_eq_catalogue_category ON equipment_catalogue(category);
+```
+
+### Table 11: `ngo_equipment_inventory` (Equipment Fleet & Condition Tracking)
+```sql
+CREATE TABLE ngo_equipment_inventory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ngo_id TEXT NOT NULL REFERENCES ngos(id) ON DELETE CASCADE,
+    equipment_type_id TEXT NOT NULL REFERENCES equipment_catalogue(id) ON DELETE RESTRICT,
+    operating_area_id INTEGER REFERENCES ngo_operating_areas(id) ON DELETE SET NULL,
+    total_quantity INTEGER NOT NULL CHECK (total_quantity >= 0),
+    available_quantity INTEGER NOT NULL CHECK (available_quantity >= 0),
+    reserved_quantity INTEGER NOT NULL DEFAULT 0 CHECK (reserved_quantity >= 0),
+    operational_condition TEXT NOT NULL DEFAULT 'SERVICEABLE' CHECK (
+        operational_condition IN (
+            'SERVICEABLE',
+            'NEEDS_MAINTENANCE',
+            'UNDER_REPAIR',
+            'UNSERVICEABLE'
+        )
+    ),
+    inspection_status TEXT NOT NULL DEFAULT 'SELF_REPORTED' CHECK (
+        inspection_status IN (
+            'SELF_REPORTED',
+            'PHYSICALLY_INSPECTED',
+            'AUDIT_EXPIRED'
+        )
+    ),
+    storage_location_name TEXT,
+    storage_latitude REAL,
+    storage_longitude REAL,
+    last_inspected_at TEXT,
+    inspected_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    is_simulated INTEGER NOT NULL DEFAULT 1 CHECK (is_simulated IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CONSTRAINT chk_equipment_quantity_balance CHECK (available_quantity + reserved_quantity <= total_quantity),
+    CONSTRAINT chk_serviceable_availability CHECK (operational_condition = 'SERVICEABLE' OR available_quantity = 0)
+);
+CREATE INDEX idx_ngo_eq_ngo ON ngo_equipment_inventory(ngo_id);
+CREATE INDEX idx_ngo_eq_type ON ngo_equipment_inventory(equipment_type_id);
+CREATE INDEX idx_ngo_eq_area ON ngo_equipment_inventory(operating_area_id);
+CREATE INDEX idx_ngo_eq_avail ON ngo_equipment_inventory(available_quantity);
+CREATE INDEX idx_ngo_eq_cond ON ngo_equipment_inventory(operational_condition);
+CREATE UNIQUE INDEX uq_ngo_equipment_depot ON ngo_equipment_inventory(ngo_id, equipment_type_id, operating_area_id, operational_condition) WHERE operating_area_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_ngo_equipment_unassigned ON ngo_equipment_inventory(ngo_id, equipment_type_id, operational_condition) WHERE operating_area_id IS NULL;
+```
+
+### Table 12: `ngo_availability_logs` (Time-Sensitive Roster Verification)
+```sql
+CREATE TABLE ngo_availability_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ngo_id TEXT NOT NULL REFERENCES ngos(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL CHECK (
+        status IN (
+            'ACTIVE_STANDBY',
+            'DEPLOYED',
+            'PARTIALLY_AVAILABLE',
+            'UNAVAILABLE',
+            'INACTIVE_STALE'
+        )
+    ),
+    available_personnel_count INTEGER NOT NULL DEFAULT 0 CHECK (available_personnel_count >= 0),
+    certified_helmsmen_count INTEGER NOT NULL DEFAULT 0 CHECK (certified_helmsmen_count >= 0),
+    reporting_person_name TEXT NOT NULL,
+    reporting_person_phone TEXT NOT NULL,
+    operational_notes TEXT,
+    checkin_timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    valid_until TEXT,
+    recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    is_simulated INTEGER NOT NULL DEFAULT 1 CHECK (is_simulated IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX idx_ngo_avail_ngo_ts ON ngo_availability_logs(ngo_id, checkin_timestamp DESC);
+CREATE INDEX idx_ngo_avail_status ON ngo_availability_logs(status);
+```
+
+### Table 13: `ngo_operating_areas` (Administrative Scope & Physical Depots)
+```sql
+CREATE TABLE ngo_operating_areas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ngo_id TEXT NOT NULL REFERENCES ngos(id) ON DELETE CASCADE,
+    state TEXT NOT NULL DEFAULT 'Assam',
+    district TEXT NOT NULL,
+    revenue_circle TEXT,
+    administrative_scope TEXT NOT NULL CHECK (
+        administrative_scope IN (
+            'STATE',
+            'DISTRICT',
+            'REVENUE_CIRCLE',
+            'BLOCK',
+            'GRAM_PANCHAYAT'
+        )
+    ),
+    geographic_identifier TEXT,               -- Official LGD code (nullable; never invented)
+    depot_location_name TEXT NOT NULL,        -- Distinct descriptive label
+    depot_latitude REAL,
+    depot_longitude REAL,
+    is_primary_depot INTEGER NOT NULL DEFAULT 1 CHECK (is_primary_depot IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CONSTRAINT uq_ngo_area UNIQUE (ngo_id, district, revenue_circle, administrative_scope)
+);
+CREATE INDEX idx_ngo_areas_ngo ON ngo_operating_areas(ngo_id);
+CREATE INDEX idx_ngo_areas_district ON ngo_operating_areas(district, revenue_circle);
+CREATE INDEX idx_ngo_areas_coords ON ngo_operating_areas(depot_latitude, depot_longitude);
+```
+
+---
+
+## 5. Verification Semantics & Data Governance Rules
+
+### 5.1 The 5 Explicit Verification States
+SURAKSHA GRID prohibits collapsing organizational readiness into a single boolean `is_verified` flag. The 5 discrete states are:
+1. `DOCUMENTED_IN_DDMP`: Organization appears in historical District Disaster Management Plan directories. Establishes legal existence reference only; does not establish current field capacity or personnel readiness.
+2. `IDENTITY_VERIFIED`: Organization registration (NGO Darpan ID, Societies Registration Act, 12A/80G) independently audited and validated against government portals.
+3. `CURRENTLY_OPERATIONAL`: Physical ground presence, active local office, and current-year field activities confirmed in the district.
+4. `AVAILABILITY_CONFIRMED`: Responder roster actively confirmed via time-sensitive field check-in within the past 24–48 hours.
+5. `EQUIPMENT_INDEPENDENTLY_VERIFIED`: Physical emergency assets (inflatable boats, lifejackets, water purification plants) physically inspected and certified serviceable by DDMA/SDRF inspectors within the past 90 days.
+
+### 5.2 Simulated vs Verified Data Governance
+- **`is_simulated` Invariant:** Every record inserted for demonstration or testing purposes must explicitly carry `is_simulated = 1`.
+- **Zero Hallucinated Partnerships:** Fictional NGO names and synthetic equipment inventories must never be stored with `is_simulated = 0` or presented as authentic state-contracted emergency response teams.
+
+---
+
+## 6. Migration Execution & Rollback Architecture
+
+### 6.1 Idempotent Execution Pipeline
+- Migrations are version-tracked in `schema_migrations (version, name, applied_at)`.
+- `initializeSchema(db, targetVersion?)` executes within an atomic SQLite transaction (`db.transaction`).
+- Re-running `initializeSchema(db)` when already at the latest version applies 0 migrations and preserves existing data completely.
+
+### 6.2 Rollback Architecture (`rollbackSchema`)
+- `rollbackSchema(db, targetVersion = 0)` executes down migrations in reverse version order within a transaction.
+- Rolling back Migration 002 cleanly drops the 7 NGO tables, removes Migration 2 from `schema_migrations`, and preserves Migration 001 core tables and data intact.

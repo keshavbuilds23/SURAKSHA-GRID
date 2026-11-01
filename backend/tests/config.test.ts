@@ -92,5 +92,31 @@ describe('Environment Configuration Validation (Zod)', () => {
     });
     assert.equal(validProd.NODE_ENV, 'production');
   });
+
+  test('strictly forbids wildcard (*) CORS_ORIGIN in production mode', () => {
+    assert.throws(
+      () => {
+        validateEnv({
+          NODE_ENV: 'production',
+          JWT_SECRET: 'valid-secure-production-secret-with-high-entropy-123456789',
+          CORS_ORIGIN: '*',
+        });
+      },
+      /CORS_ORIGIN cannot contain wildcard \(\*\) in production mode/,
+      'Production mode must reject wildcard CORS_ORIGIN'
+    );
+
+    assert.throws(
+      () => {
+        validateEnv({
+          NODE_ENV: 'production',
+          JWT_SECRET: 'valid-secure-production-secret-with-high-entropy-123456789',
+          CORS_ORIGIN: 'https://suraksha.assam.gov.in, *',
+        });
+      },
+      /CORS_ORIGIN cannot contain wildcard \(\*\) in production mode/,
+      'Production mode must reject wildcard CORS_ORIGIN even in comma-separated list'
+    );
+  });
 });
 

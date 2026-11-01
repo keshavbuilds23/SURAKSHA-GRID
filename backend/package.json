@@ -8,7 +8,8 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "test": "tsx --test tests/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "seed:demo": "tsx scripts/seed-demo-ngo.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

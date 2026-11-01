@@ -7,8 +7,9 @@ import {
 } from './outboxDb.ts';
 
 export { getAllQueuedReports, clearAllQueuedReports } from './outboxDb.ts';
-import type { QueuedOfflineReport, SyncBatchResponse, SyncItemOutcome } from '../types/sync.ts';
-import type { Incident, IncidentSeverity, CreateIncidentPayload } from '../types/incident.ts';
+import type { QueuedOfflineReport, SyncBatchResponse } from '../types/sync.ts';
+import type { Incident, CreateIncidentPayload } from '../types/incident.ts';
+import { apiBatchSyncReports, apiGetIncidents } from './apiClient.ts';
 
 export interface SyncExecutionResult {
   batchResponse: SyncBatchResponse;
@@ -38,16 +39,19 @@ export async function enqueueReport(
 }
 
 /**
- * Execute synchronization of pending outbox reports.
- * If a real backend endpoint is available, calls POST /api/v1/sync/batch.
- * Otherwise, executes a simulated idempotent sync engine strictly conforming to the API Contract.
+ * Execute synchronization of pending outbox reports against the Express REST API.
+ * 1. Online: sends batch payload to POST /api/v1/sync/batch.
+ * 2. Unreachable/Offline: leaves reports safely buffered in IndexedDB without data loss.
+ * 3. Confirmed server outcomes: removes successfully persisted items from IndexedDB.
+ * 4. Idempotency conflicts: preserves draft in IndexedDB flagged with 'CONFLICT' status.
+ * 5. Returns real persisted server incidents fetched from SQLite database.
  */
 export async function processOutboxSync(
-  existingIncidents: Incident[],
+  _existingIncidents: Incident[],
   isOnline: boolean
 ): Promise<SyncExecutionResult> {
   if (!isOnline) {
-    throw new Error('Network is offline. Cannot reach command EOC server.');
+    throw new Error('Network is offline. Cannot reach command EOC server on port 5000.');
   }
 
   const allReports = await getAllQueuedReports();
@@ -66,111 +70,54 @@ export async function processOutboxSync(
     };
   }
 
-  // Mark pending reports as SYNCING in IndexedDB
+  // 1. Mark pending reports as SYNCING in IndexedDB
   for (const report of pendingReports) {
     await updateReportStatus(report.client_report_id, 'SYNCING');
   }
 
-  const outcomes: SyncItemOutcome[] = [];
-  const newlyCreatedIncidents: Incident[] = [];
+  // 2. Transmit to real backend HTTP API
+  const apiRes = await apiBatchSyncReports(pendingReports);
 
-  for (const report of pendingReports) {
-    // Check if client_report_id already exists in incidents dataset
-    const matchedIncident = existingIncidents.find(i => i.client_report_id === report.client_report_id);
-
-    if (matchedIncident) {
-      // Check if payload matches (idempotent retry) or conflicts
-      const isIdentical =
-        matchedIncident.title === report.title &&
-        matchedIncident.category === report.category &&
-        matchedIncident.affected_count === report.affected_count;
-
-      if (isIdentical) {
-        // already_synced: safe acknowledgement
-        outcomes.push({
-          client_report_id: report.client_report_id,
-          incident_id: matchedIncident.id,
-          result: 'already_synced',
-          error: null,
-        });
-        await removeQueuedReport(report.client_report_id);
-      } else {
-        // IDEMPOTENCY_CONFLICT: same UUID but conflicting payload
-        outcomes.push({
-          client_report_id: report.client_report_id,
-          incident_id: matchedIncident.id,
-          result: 'rejected',
-          error: {
-            code: 'IDEMPOTENCY_CONFLICT',
-            message:
-              'A report with this client_report_id already exists on server with different content. Original report was preserved.',
-          },
-        });
-        await updateReportStatus(report.client_report_id, 'CONFLICT', {
-          server_incident_id: matchedIncident.id,
-          last_error: 'IDEMPOTENCY_CONFLICT: Server rejected modified payload under same UUID.',
-        });
-      }
-    } else {
-      // Clean sync: Calculate operational severity deterministically
-      const calculatedSeverity: IncidentSeverity =
-        report.affected_count >= 20 || report.category === 'MAROONED_RESCUE'
-          ? 'CRITICAL'
-          : report.medical_required || report.category === 'MEDICAL_EMERGENCY'
-          ? 'HIGH'
-          : report.reported_urgency === 'CRITICAL'
-          ? 'HIGH'
-          : 'MEDIUM';
-
-      const serverAssignedId = Math.floor(Math.random() * 800) + 300;
-
-      const newIncident: Incident = {
-        id: serverAssignedId,
-        client_report_id: report.client_report_id,
-        title: report.title,
-        description: report.description,
-        category: report.category,
-        reported_urgency: report.reported_urgency,
-        severity: calculatedSeverity,
-        verification_status: 'PENDING',
-        latitude: report.latitude,
-        longitude: report.longitude,
-        landmark: report.landmark,
-        affected_count: Number(report.affected_count),
-        medical_required: report.medical_required,
-        reporter: {
-          id: 31,
-          full_name: 'Field Volunteer (Offline Sync)',
-          phone: null,
-          role: 'volunteer',
-        },
-        created_at: report.queued_at,
-        updated_at: new Date().toISOString(),
-      };
-
-      outcomes.push({
-        client_report_id: report.client_report_id,
-        incident_id: serverAssignedId,
-        result: 'synced',
-        error: null,
+  // 3. Handle Network or Server Failure
+  if (!apiRes.success || !apiRes.data) {
+    const errorMsg =
+      apiRes.error?.message || 'Server batch sync failed. Reports preserved in local outbox.';
+    for (const report of pendingReports) {
+      await updateReportStatus(report.client_report_id, 'FAILED', {
+        last_error: errorMsg,
       });
+    }
+    throw new Error(errorMsg);
+  }
 
-      newlyCreatedIncidents.push(newIncident);
-      await removeQueuedReport(report.client_report_id);
+  const batchResponse = apiRes.data;
+
+  // 4. Update IndexedDB records based on server confirmed outcomes
+  for (const outcome of batchResponse.items) {
+    if (outcome.result === 'synced' || outcome.result === 'already_synced') {
+      // Confirmed persisted in SQLite backend -> safe to delete from local outbox
+      await removeQueuedReport(outcome.client_report_id);
+    } else if (outcome.result === 'rejected') {
+      // Conflicting payload under same UUID -> mark as CONFLICT for user recovery
+      await updateReportStatus(outcome.client_report_id, 'CONFLICT', {
+        server_incident_id: outcome.incident_id,
+        last_error:
+          outcome.error?.message ||
+          'Sync rejected due to payload conflict with existing server incident.',
+      });
     }
   }
 
-  const batchResponse: SyncBatchResponse = {
-    processed_count: pendingReports.length,
-    synced_count: outcomes.filter(o => o.result === 'synced').length,
-    already_synced_count: outcomes.filter(o => o.result === 'already_synced').length,
-    rejected_count: outcomes.filter(o => o.result === 'rejected').length,
-    items: outcomes,
-  };
+  // 5. Fetch updated server incident list from SQLite database
+  const serverIncidentsRes = await apiGetIncidents();
+  const latestServerIncidents =
+    serverIncidentsRes.success && serverIncidentsRes.data
+      ? serverIncidentsRes.data
+      : [];
 
   return {
     batchResponse,
-    syncedIncidents: newlyCreatedIncidents,
+    syncedIncidents: latestServerIncidents,
   };
 }
 

@@ -11,6 +11,7 @@ import { ReportEmergency } from './components/Report/ReportEmergency';
 import { IncidentDetailTriage } from './components/Triage/IncidentDetailTriage';
 import { ResourceLogistics } from './components/Resources/ResourceLogistics';
 import { OfflineOutbox } from './components/Sync/OfflineOutbox';
+import { NgoNetwork } from './components/Ngo/NgoNetwork';
 
 // Lazy-load MapLibre geospatial canvas for high performance & minimal initial bundle
 const LiveIncidentMap = lazy(() =>
@@ -50,6 +51,11 @@ import {
   discardConflictReport,
 } from './services/outboxSyncService';
 import {
+  apiGetIncidents,
+  apiVerifyIncident,
+  setCoordinatorAuthToken,
+} from './services/apiClient';
+import {
   transitionAssignmentStatus,
   allocateResource,
 } from './services/resourceLifecycleService';
@@ -62,13 +68,47 @@ import {
   Database,
   RefreshCw,
   Shield,
+  Building2,
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'report' | 'details' | 'resources' | 'sync'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'report' | 'details' | 'resources' | 'ngos' | 'sync'>('dashboard');
+
+  // Coordinator Authentication Session State
+  const [coordinatorToken, setCoordinatorTokenState] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('suraksha_coordinator_jwt') || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleSetCoordinatorToken = (token: string | null) => {
+    setCoordinatorTokenState(token);
+    setCoordinatorAuthToken(token);
+    try {
+      if (token) {
+        localStorage.setItem('suraksha_coordinator_jwt', token);
+      } else {
+        localStorage.removeItem('suraksha_coordinator_jwt');
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (coordinatorToken) {
+      setCoordinatorAuthToken(coordinatorToken);
+    }
+  }, [coordinatorToken]);
+
+  // Helper to tag mock incidents as SIMULATED DEMO
+  const taggedMockIncidents = MOCK_INCIDENTS.map(m => ({
+    ...m,
+    landmark: m.landmark.includes('[SIMULATED DEMO]') ? m.landmark : `${m.landmark} [SIMULATED DEMO]`,
+  }));
 
   // Unified Central State (Single Source of Truth)
-  const [incidents, setIncidents] = useState<Incident[]>(MOCK_INCIDENTS);
+  const [incidents, setIncidents] = useState<Incident[]>(taggedMockIncidents);
   const [resources, setResources] = useState<Resource[]>(MOCK_RESOURCES);
   const [assignments, setAssignments] = useState<Assignment[]>(MOCK_ASSIGNMENTS);
   const [selectedIncidentId, setSelectedIncidentId] = useState<number>(101);
@@ -79,6 +119,24 @@ export default function App() {
   const [reportSuccessMsg, setReportSuccessMsg] = useState<string | null>(null);
   const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
   const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
+
+  // Load real server incidents from SQLite database on startup
+  useEffect(() => {
+    async function loadServerIncidents() {
+      try {
+        const res = await apiGetIncidents();
+        if (res.success && res.data && res.data.length > 0) {
+          const serverIds = new Set(res.data.map(i => i.id));
+          const nonConflictingMocks = taggedMockIncidents.filter(m => !serverIds.has(m.id));
+          setIncidents([...res.data, ...nonConflictingMocks]);
+          setSelectedIncidentId(res.data[0].id);
+        }
+      } catch (err) {
+        console.warn('Backend unavailable, operating in offline simulation mode:', err);
+      }
+    }
+    loadServerIncidents();
+  }, []);
 
   // Load existing persistent outbox reports from IndexedDB on startup
   useEffect(() => {
@@ -114,20 +172,29 @@ export default function App() {
     : [];
 
   // Coordinator Actions
-  const handleVerifyIncident = (id: number) => {
-    setIncidents(prev =>
-      prev.map(inc =>
-        inc.id === id
-          ? {
-              ...inc,
-              verification_status: 'VERIFIED',
-              verified_by: { id: 4, full_name: 'Dr. N. Sarma (District EOC)' },
-              verified_at: new Date().toISOString(),
-              verification_notes: 'Ground truth confirmed via VHF radio contact with Revenue Circle Officer.',
-            }
-          : inc
-      )
-    );
+  const handleVerifyIncident = async (id: number) => {
+    try {
+      const res = await apiVerifyIncident(
+        id,
+        'Ground truth confirmed via VHF radio contact with Revenue Circle Officer.'
+      );
+      if (res.success && res.data) {
+        setIncidents(prev => prev.map(inc => (inc.id === id ? res.data! : inc)));
+        setSyncSuccessMsg(`Incident #${id} ground truth verified and recorded in SQLite audit ledger.`);
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        setSyncErrorMsg(
+          'Verification blocked: Incident verification requires a cryptographically verified coordinator JWT token. Anonymous verification is prohibited by security policy.'
+        );
+        return;
+      }
+    } catch (err: any) {
+      console.warn('Backend verification error:', err);
+      setSyncErrorMsg(
+        'Verification request failed: Server requires cryptographically verified coordinator credentials.'
+      );
+    }
   };
 
   const handleEscalateSeverity = (id: number, newSev: IncidentSeverity) => {
@@ -184,7 +251,9 @@ export default function App() {
       const result = await processOutboxSync(incidents, isOnline);
 
       if (result.syncedIncidents.length > 0) {
-        setIncidents(prev => [...result.syncedIncidents, ...prev]);
+        const serverIds = new Set(result.syncedIncidents.map(i => i.id));
+        const nonConflictingMocks = taggedMockIncidents.filter(m => !serverIds.has(m.id));
+        setIncidents([...result.syncedIncidents, ...nonConflictingMocks]);
         setSelectedIncidentId(result.syncedIncidents[0].id);
       }
 
@@ -200,7 +269,7 @@ export default function App() {
         );
       } else if (synced_count > 0 || already_synced_count > 0) {
         setSyncSuccessMsg(
-          `Successfully synchronized ${synced_count} report(s) (${already_synced_count} idempotent acknowledgements).`
+          `Successfully synchronized ${synced_count} report(s) to SQLite database (${already_synced_count} idempotent acknowledgements).`
         );
       }
     } catch (err: any) {
@@ -297,6 +366,20 @@ export default function App() {
 
         {/* Status, Simulation Indicator, and Connectivity */}
         <div className="flex items-center space-x-3 text-xs">
+          {/* Coordinator Role Indicator */}
+          <button
+            onClick={() => setActiveTab('ngos')}
+            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full border text-xs font-medium cursor-pointer transition ${
+              coordinatorToken
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
+                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+            }`}
+            title="Coordinator Authentication (Configure in NGO Network)"
+          >
+            <Shield className={`w-3 h-3 ${coordinatorToken ? 'text-emerald-600' : 'text-slate-400'}`} />
+            <span>{coordinatorToken ? 'Role: Coordinator' : 'Role: Public'}</span>
+          </button>
+
           <span className="px-2.5 py-1 rounded bg-slate-100 text-slate-600 font-medium border border-slate-200 text-[11px]">
             SIMULATED DEMO DATA
           </span>
@@ -404,6 +487,18 @@ export default function App() {
         </button>
 
         <button
+          onClick={() => setActiveTab('ngos')}
+          className={`px-3.5 py-3 transition flex items-center space-x-2 whitespace-nowrap border-b-2 -mb-px ${
+            activeTab === 'ngos'
+              ? 'border-teal-800 text-teal-900 font-semibold bg-teal-50/40'
+              : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+          }`}
+        >
+          <Building2 className="w-4 h-4 text-slate-500" />
+          <span>NGO Network</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('sync')}
           className={`px-3.5 py-3 transition flex items-center space-x-2 whitespace-nowrap border-b-2 -mb-px ${
             activeTab === 'sync'
@@ -482,6 +577,8 @@ export default function App() {
             onVerifyIncident={handleVerifyIncident}
             onEscalateSeverity={handleEscalateSeverity}
             onNavigateToResources={() => setActiveTab('resources')}
+            coordinatorToken={coordinatorToken}
+            onNavigateToNgos={() => setActiveTab('ngos')}
           />
         )}
 
@@ -496,7 +593,15 @@ export default function App() {
           />
         )}
 
-        {/* TAB 6: OFFLINE OUTBOX & SYNC */}
+        {/* TAB 6: NGO NETWORK */}
+        {activeTab === 'ngos' && (
+          <NgoNetwork
+            coordinatorToken={coordinatorToken}
+            onSetCoordinatorToken={handleSetCoordinatorToken}
+          />
+        )}
+
+        {/* TAB 7: OFFLINE OUTBOX & SYNC */}
         {activeTab === 'sync' && (
           <OfflineOutbox
             outbox={outbox}

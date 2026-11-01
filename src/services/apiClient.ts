@@ -1,6 +1,31 @@
 import { Incident, CreateIncidentPayload } from '../types/incident';
 import { Resource, Assignment, CreateAssignmentPayload } from '../types/resource';
 import { SyncBatchResponse, QueuedOfflineReport } from '../types/sync';
+import {
+  NgoSummary,
+  NgoDetail,
+  QueryNgosParams,
+  CreateNgoPayload,
+  CapabilityCatalogueItem,
+  EquipmentCatalogueItem,
+  NgoCapabilityDetail,
+  NgoDepotDetail,
+  NgoEquipmentDetail,
+  CreateOperatingAreaPayload,
+  CreateEquipmentPayload,
+  PatchEquipmentPayload,
+  SyncCapabilitiesPayload,
+} from '../types/ngo';
+import { RecommendationQueryInput, RecommendationResult } from '../types/recommendation';
+
+export interface ApiMeta {
+  page?: number;
+  limit?: number;
+  total?: number;
+  total_pages?: number;
+  filter_mode?: string;
+  [key: string]: any;
+}
 
 export interface ApiError {
   code: string;
@@ -11,6 +36,7 @@ export interface ApiError {
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;
+  meta?: ApiMeta;
   error?: ApiError;
   status: number;
 }
@@ -77,6 +103,7 @@ async function request<T>(
       success: true,
       status,
       data: json.data as T,
+      meta: json?.meta,
     };
   } catch (error: any) {
     // Network disconnection, DNS failure, or connection refused
@@ -139,12 +166,31 @@ export async function apiGetIncidents(): Promise<ApiResponse<Incident[]>> {
   });
 }
 
+let coordinatorAuthToken: string | null = null;
+
+export function setCoordinatorAuthToken(token: string | null): void {
+  coordinatorAuthToken = token ? token.replace(/^Bearer\s+/i, '').trim() : null;
+}
+
+export function getCoordinatorAuthToken(): string | null {
+  return coordinatorAuthToken;
+}
+
+export function formatAuthHeaders(token?: string | null): HeadersInit {
+  const active = token || coordinatorAuthToken;
+  if (!active) return {};
+  const clean = active.replace(/^Bearer\s+/i, '').trim();
+  return clean ? { Authorization: `Bearer ${clean}` } : {};
+}
+
 export async function apiVerifyIncident(
   id: number,
-  notes: string = 'Verified by coordinator'
+  notes: string = 'Verified by coordinator',
+  token?: string
 ): Promise<ApiResponse<Incident>> {
   return request<Incident>(`/incidents/${id}/verify`, {
     method: 'PATCH',
+    headers: formatAuthHeaders(token),
     body: JSON.stringify({ verification_notes: notes }),
   });
 }
@@ -232,4 +278,251 @@ export async function apiReturnAssignment(
     body: JSON.stringify({ return_notes: notes }),
   });
 }
+
+// -------------------------------------------------------------
+// NGO NETWORK API (Section 4.3 of API Contract)
+// -------------------------------------------------------------
+
+export async function apiGetNgos(
+  params: QueryNgosParams = {},
+  token?: string
+): Promise<ApiResponse<NgoSummary[]>> {
+  const query = new URLSearchParams();
+  if (params.page) query.set('page', params.page.toString());
+  if (params.limit) query.set('limit', params.limit.toString());
+  if (params.district) query.set('district', params.district);
+  if (params.revenue_circle) query.set('revenue_circle', params.revenue_circle);
+  if (params.capability_id) query.set('capability_id', params.capability_id);
+  if (params.filter_mode) query.set('filter_mode', params.filter_mode);
+  if (params.search) query.set('search', params.search);
+
+  const qs = query.toString();
+  const endpoint = qs ? `/ngos?${qs}` : '/ngos';
+
+  return request<NgoSummary[]>(endpoint, {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiRegisterNgo(
+  payload: CreateNgoPayload,
+  token?: string
+): Promise<ApiResponse<any>> {
+  return request<any>('/ngos', {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiGetNgoById(
+  id: string,
+  token?: string
+): Promise<ApiResponse<NgoDetail>> {
+  return request<NgoDetail>(`/ngos/${encodeURIComponent(id)}`, {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiVerifyNgoDimension(
+  id: string,
+  payload: {
+    dimension: string;
+    is_verified: boolean;
+    evidence_reference?: string;
+    notes?: string;
+    valid_until?: string;
+  },
+  token?: string
+): Promise<ApiResponse<any>> {
+  return request<any>(`/ngos/${encodeURIComponent(id)}/verifications`, {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiPromoteNgoToOperational(
+  id: string,
+  token?: string
+): Promise<ApiResponse<any>> {
+  return request<any>(`/ngos/${encodeURIComponent(id)}/operational-status`, {
+    method: 'PATCH',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiCheckinNgoAvailability(
+  id: string,
+  payload: {
+    status: string;
+    available_personnel_count: number;
+    certified_helmsmen_count?: number;
+    reporting_person_name: string;
+    reporting_person_phone: string;
+    operational_notes?: string;
+    valid_until?: string;
+  },
+  token?: string
+): Promise<ApiResponse<any>> {
+  return request<any>(`/ngos/${encodeURIComponent(id)}/availability`, {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+// Contract alias for checkin
+export const apiCheckinNgo = apiCheckinNgoAvailability;
+
+// -----------------------------------------------------------
+// Phase 4.4: Catalogues, Operating Areas, Capabilities & Equipment
+// -----------------------------------------------------------
+
+export async function apiGetCapabilityCatalog(token?: string): Promise<ApiResponse<CapabilityCatalogueItem[]>> {
+  return request<CapabilityCatalogueItem[]>('/capabilities', {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiGetEquipmentCatalog(token?: string): Promise<ApiResponse<EquipmentCatalogueItem[]>> {
+  return request<EquipmentCatalogueItem[]>('/equipment-catalogue', {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiGetNgoCapabilities(
+  ngoId: string,
+  token?: string
+): Promise<ApiResponse<NgoCapabilityDetail[]>> {
+  return request<NgoCapabilityDetail[]>(`/ngos/${encodeURIComponent(ngoId)}/capabilities`, {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiSyncNgoCapabilities(
+  ngoId: string,
+  payload: SyncCapabilitiesPayload,
+  token?: string
+): Promise<ApiResponse<NgoCapabilityDetail[]>> {
+  return request<NgoCapabilityDetail[]>(`/ngos/${encodeURIComponent(ngoId)}/capabilities`, {
+    method: 'PUT',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiGetNgoOperatingAreas(
+  ngoId: string,
+  token?: string
+): Promise<ApiResponse<NgoDepotDetail[]>> {
+  return request<NgoDepotDetail[]>(`/ngos/${encodeURIComponent(ngoId)}/operating-areas`, {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiCreateNgoOperatingArea(
+  ngoId: string,
+  payload: CreateOperatingAreaPayload,
+  token?: string
+): Promise<ApiResponse<NgoDepotDetail>> {
+  return request<NgoDepotDetail>(`/ngos/${encodeURIComponent(ngoId)}/operating-areas`, {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiDeleteNgoOperatingArea(
+  ngoId: string,
+  areaId: number,
+  token?: string
+): Promise<ApiResponse<any>> {
+  return request<any>(`/ngos/${encodeURIComponent(ngoId)}/operating-areas/${encodeURIComponent(areaId.toString())}`, {
+    method: 'DELETE',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiGetNgoEquipment(
+  ngoId: string,
+  token?: string
+): Promise<ApiResponse<NgoEquipmentDetail[]>> {
+  return request<NgoEquipmentDetail[]>(`/ngos/${encodeURIComponent(ngoId)}/equipment`, {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+export async function apiCreateNgoEquipment(
+  ngoId: string,
+  payload: CreateEquipmentPayload,
+  token?: string
+): Promise<ApiResponse<NgoEquipmentDetail>> {
+  return request<NgoEquipmentDetail>(`/ngos/${encodeURIComponent(ngoId)}/equipment`, {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiPatchNgoEquipment(
+  ngoId: string,
+  equipmentId: number,
+  payload: PatchEquipmentPayload,
+  token?: string
+): Promise<ApiResponse<NgoEquipmentDetail>> {
+  return request<NgoEquipmentDetail>(`/ngos/${encodeURIComponent(ngoId)}/equipment/${encodeURIComponent(equipmentId.toString())}`, {
+    method: 'PATCH',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiDeleteNgoEquipment(
+  ngoId: string,
+  equipmentId: number,
+  token?: string
+): Promise<ApiResponse<any>> {
+  return request<any>(`/ngos/${encodeURIComponent(ngoId)}/equipment/${encodeURIComponent(equipmentId.toString())}`, {
+    method: 'DELETE',
+    headers: formatAuthHeaders(token),
+  });
+}
+
+// -------------------------------------------------------------
+// Recommendation Engine API Endpoints
+// -------------------------------------------------------------
+
+export async function apiGetRecommendations(
+  query: RecommendationQueryInput,
+  token?: string
+): Promise<ApiResponse<RecommendationResult>> {
+  return request<RecommendationResult>('/recommendations/ngos', {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(query),
+  });
+}
+
+export async function apiGetIncidentRecommendations(
+  incidentId: number,
+  overrides?: Partial<RecommendationQueryInput>,
+  token?: string
+): Promise<ApiResponse<RecommendationResult>> {
+  return request<RecommendationResult>(`/incidents/${encodeURIComponent(incidentId.toString())}/recommendations`, {
+    method: 'POST',
+    headers: formatAuthHeaders(token),
+    body: JSON.stringify(overrides || {}),
+  });
+}
+
+
+
 

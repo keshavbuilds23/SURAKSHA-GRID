@@ -13,7 +13,7 @@ export interface DatabaseConnectionOptions {
  * Creates and configures a SQLite connection with production resilience pragmas.
  */
 export function createDatabaseConnection(options: DatabaseConnectionOptions = {}): Database.Database {
-  const targetPath = options.dbPath ? options.dbPath : getResolvedDbPath();
+  const targetPath = getResolvedDbPath(options.dbPath);
 
   try {
     // If saving to file on disk, ensure directory exists

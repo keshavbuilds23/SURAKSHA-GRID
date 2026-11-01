@@ -57,7 +57,7 @@ describe('Database Connection & Schema Foundation', () => {
   test('initializeSchema applies migration 1 and creates the 6 documented tables', () => {
     db = createDatabaseConnection({ dbPath: tempDbPath });
 
-    const result = initializeSchema(db);
+    const result = initializeSchema(db, 1);
     assert.equal(result.appliedCount, 1, 'Should apply 1 migration');
     assert.equal(result.currentVersion, 1, 'Current schema version should be 1');
 
@@ -81,8 +81,10 @@ describe('Database Connection & Schema Foundation', () => {
   test('initializeSchema is idempotent and does not erase existing data', () => {
     db = createDatabaseConnection({ dbPath: tempDbPath });
 
-    // Initial run
-    initializeSchema(db);
+    // Initial run - apply all registered migrations
+    const initialResult = initializeSchema(db);
+    assert.equal(initialResult.appliedCount, 3, 'Should apply all 3 migrations initially');
+    assert.equal(initialResult.currentVersion, 3, 'Current version should be 3');
 
     // Insert a test user into users table
     db.prepare(`
@@ -93,7 +95,7 @@ describe('Database Connection & Schema Foundation', () => {
     // Second run: must not recreate or overwrite
     const rerunResult = initializeSchema(db);
     assert.equal(rerunResult.appliedCount, 0, 'Should apply 0 migrations on rerun');
-    assert.equal(rerunResult.currentVersion, 1, 'Version should remain 1');
+    assert.equal(rerunResult.currentVersion, 3, 'Version should remain 3');
 
     // User must still exist
     const user = db.prepare('SELECT username, full_name FROM users WHERE username = ?').get('coordinator_test') as {

@@ -1,9 +1,14 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Load .env file if present
 dotenv.config();
+
+// Determine canonical backend package root directory (parent of src/ or dist/)
+const currentModuleDir = path.dirname(fileURLToPath(import.meta.url));
+export const BACKEND_ROOT = path.resolve(currentModuleDir, '../../');
 
 export const envSchema = z.object({
   PORT: z
@@ -23,7 +28,7 @@ export const envSchema = z.object({
   CORS_ORIGIN: z
     .string()
     .min(1, 'CORS_ORIGIN cannot be empty')
-    .default('http://localhost:5173'),
+    .default('http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174'),
   DB_PATH: z
     .string()
     .min(1, 'DB_PATH cannot be empty')
@@ -59,6 +64,21 @@ export const envSchema = z.object({
     message: 'JWT_SECRET must be at least 32 characters in production mode',
     path: ['JWT_SECRET'],
   }
+).refine(
+  (data) => {
+    // In production, enforce explicit allowed origins (never allow wildcard *)
+    if (data.NODE_ENV === 'production') {
+      const origins = data.CORS_ORIGIN.split(',').map(o => o.trim());
+      if (origins.includes('*')) {
+        return false;
+      }
+    }
+    return true;
+  },
+  {
+    message: 'CORS_ORIGIN cannot contain wildcard (*) in production mode',
+    path: ['CORS_ORIGIN'],
+  }
 );
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -79,6 +99,11 @@ export function getResolvedDbPath(dbPath = env.DB_PATH): string {
   if (dbPath === ':memory:') {
     return ':memory:';
   }
-  return path.isAbsolute(dbPath) ? dbPath : path.resolve(process.cwd(), dbPath);
+  if (path.isAbsolute(dbPath)) {
+    return dbPath;
+  }
+  // If run from workspace root, backend/data might be specified as ./data
+  // Prioritize resolving relative to BACKEND_ROOT to ensure single source of truth
+  return path.resolve(BACKEND_ROOT, dbPath);
 }
 

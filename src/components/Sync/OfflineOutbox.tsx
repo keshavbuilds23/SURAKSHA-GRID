@@ -58,9 +58,9 @@ export const OfflineOutbox: React.FC<OfflineOutboxProps> = ({
 
         {/* Sync Status Banner */}
         <div className="flex items-center space-x-2 text-xs bg-slate-50 p-3 rounded border border-slate-200 font-mono text-slate-600">
-          <span className="w-2 h-2 rounded-full bg-teal-600"></span>
+          <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
           <span>
-            Sync Engine Mode: <strong className="text-slate-900">Simulated Contract Engine</strong> (Pending Express Backend Endpoint on Port 5000)
+            Sync Engine Mode: <strong className="text-slate-900">Live Express REST API</strong> (POST /api/v1/sync/batch &rarr; SQLite WAL)
           </span>
         </div>
 
