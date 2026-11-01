@@ -11,7 +11,8 @@ import { ReportEmergency } from './components/Report/ReportEmergency';
 import { IncidentDetailTriage } from './components/Triage/IncidentDetailTriage';
 import { ResourceLogistics } from './components/Resources/ResourceLogistics';
 import { OfflineOutbox } from './components/Sync/OfflineOutbox';
-import { NgoNetwork } from './components/Ngo/NgoNetwork';
+import { NgoNetwork, parseJwtPayload } from './components/Ngo/NgoNetwork';
+import { CoordinatorLoginModal } from './components/Auth/CoordinatorLoginModal';
 
 // Lazy-load MapLibre geospatial canvas for high performance & minimal initial bundle
 const LiveIncidentMap = lazy(() =>
@@ -69,15 +70,27 @@ import {
   RefreshCw,
   Shield,
   Building2,
+  KeyRound,
+  LogOut,
 } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'map' | 'report' | 'details' | 'resources' | 'ngos' | 'sync'>('dashboard');
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
 
   // Coordinator Authentication Session State
   const [coordinatorToken, setCoordinatorTokenState] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('suraksha_coordinator_jwt') || null;
+      const stored = localStorage.getItem('suraksha_coordinator_jwt');
+      if (stored) {
+        const parsed = parseJwtPayload(stored);
+        if (parsed?.exp && parsed.exp * 1000 < Date.now()) {
+          localStorage.removeItem('suraksha_coordinator_jwt');
+          return null;
+        }
+        return stored;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -97,7 +110,12 @@ export default function App() {
 
   useEffect(() => {
     if (coordinatorToken) {
-      setCoordinatorAuthToken(coordinatorToken);
+      const parsed = parseJwtPayload(coordinatorToken);
+      if (parsed?.exp && parsed.exp * 1000 < Date.now()) {
+        handleSetCoordinatorToken(null);
+      } else {
+        setCoordinatorAuthToken(coordinatorToken);
+      }
     }
   }, [coordinatorToken]);
 
@@ -366,19 +384,35 @@ export default function App() {
 
         {/* Status, Simulation Indicator, and Connectivity */}
         <div className="flex items-center space-x-3 text-xs">
-          {/* Coordinator Role Indicator */}
-          <button
-            onClick={() => setActiveTab('ngos')}
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full border text-xs font-medium cursor-pointer transition ${
-              coordinatorToken
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'
-                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-            }`}
-            title="Coordinator Authentication (Configure in NGO Network)"
-          >
-            <Shield className={`w-3 h-3 ${coordinatorToken ? 'text-emerald-600' : 'text-slate-400'}`} />
-            <span>{coordinatorToken ? 'Role: Coordinator' : 'Role: Public'}</span>
-          </button>
+          {/* Coordinator Role & Authentication Controls */}
+          {coordinatorToken ? (
+            <div className="flex items-center space-x-1.5">
+              <span className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-semibold">
+                <Shield className="w-3 h-3 text-emerald-600" />
+                <span>Coordinator Active</span>
+              </span>
+              <button
+                onClick={() => {
+                  handleSetCoordinatorToken(null);
+                  setSyncSuccessMsg('Signed out of coordinator session.');
+                }}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:text-rose-700 hover:bg-rose-50 hover:border-rose-200 text-[11px] font-medium transition cursor-pointer"
+                title="Sign out of coordinator session"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>Logout</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setIsLoginModalOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1 rounded-full border border-teal-700 bg-teal-50 hover:bg-teal-100 text-teal-900 text-xs font-semibold cursor-pointer transition shadow-2xs"
+              title="Sign in with coordinator credentials"
+            >
+              <KeyRound className="w-3 h-3 text-teal-700" />
+              <span>Coordinator Sign In</span>
+            </button>
+          )}
 
           <span className="px-2.5 py-1 rounded bg-slate-100 text-slate-600 font-medium border border-slate-200 text-[11px]">
             SIMULATED DEMO DATA
@@ -408,10 +442,6 @@ export default function App() {
               <span>Outbox ({pendingOutboxCount}) Sync Ready</span>
             </button>
           )}
-
-          <span className="text-slate-400 font-mono text-[11px] hidden md:inline-block">
-            Vite: 5173 ➔ Express: 5000
-          </span>
         </div>
       </header>
 
@@ -579,6 +609,7 @@ export default function App() {
             onNavigateToResources={() => setActiveTab('resources')}
             coordinatorToken={coordinatorToken}
             onNavigateToNgos={() => setActiveTab('ngos')}
+            onOpenLogin={() => setIsLoginModalOpen(true)}
           />
         )}
 
@@ -598,6 +629,7 @@ export default function App() {
           <NgoNetwork
             coordinatorToken={coordinatorToken}
             onSetCoordinatorToken={handleSetCoordinatorToken}
+            onOpenLogin={() => setIsLoginModalOpen(true)}
           />
         )}
 
@@ -615,6 +647,16 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Global Coordinator Login Modal */}
+      <CoordinatorLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onLoginSuccess={(token, user) => {
+          handleSetCoordinatorToken(token);
+          setSyncSuccessMsg(`Authenticated successfully as coordinator: ${user.full_name} (${user.username}).`);
+        }}
+      />
 
       {/* REFINED OPERATIONAL FOOTER */}
       <footer className="bg-white border-t border-slate-200 px-6 py-2.5 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">

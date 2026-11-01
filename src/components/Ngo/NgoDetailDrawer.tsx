@@ -51,6 +51,7 @@ interface NgoDetailDrawerProps {
   coordinatorToken: string | null;
   onClose: () => void;
   onRefreshList: () => void;
+  onOpenLogin?: () => void;
 }
 
 export const NgoDetailDrawer: React.FC<NgoDetailDrawerProps> = ({
@@ -59,6 +60,7 @@ export const NgoDetailDrawer: React.FC<NgoDetailDrawerProps> = ({
   coordinatorToken,
   onClose,
   onRefreshList,
+  onOpenLogin,
 }) => {
   const [ngo, setNgo] = useState<NgoDetail | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -1139,9 +1141,19 @@ export const NgoDetailDrawer: React.FC<NgoDetailDrawerProps> = ({
                           <span>{isPromoting ? 'Promoting...' : 'Promote to Operational (is_simulated = 0)'}</span>
                         </button>
                       ) : (
-                        <div className="text-[11px] text-slate-500 italic bg-white p-2 rounded border border-amber-200 flex items-center space-x-1.5">
-                          <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>Coordinator login required to execute operational promotion.</span>
+                        <div className="text-[11px] text-slate-500 italic bg-white p-2.5 rounded border border-amber-200 flex items-center justify-between">
+                          <div className="flex items-center space-x-1.5">
+                            <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>Coordinator login required to execute operational promotion.</span>
+                          </div>
+                          {onOpenLogin && (
+                            <button
+                              onClick={onOpenLogin}
+                              className="text-teal-800 font-semibold underline hover:text-teal-900 ml-2 cursor-pointer not-italic"
+                            >
+                              Sign In
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

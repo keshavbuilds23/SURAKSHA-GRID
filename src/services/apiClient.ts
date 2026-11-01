@@ -17,6 +17,7 @@ import {
   SyncCapabilitiesPayload,
 } from '../types/ngo';
 import { RecommendationQueryInput, RecommendationResult } from '../types/recommendation';
+import { LoginCredentials, LoginResponse, AuthUser } from '../types/auth';
 
 export interface ApiMeta {
   page?: number;
@@ -523,6 +524,25 @@ export async function apiGetIncidentRecommendations(
   });
 }
 
+// -------------------------------------------------------------
+// Authentication API Endpoints
+// -------------------------------------------------------------
 
+export async function apiLogin(
+  credentials: LoginCredentials
+): Promise<ApiResponse<LoginResponse>> {
+  return request<LoginResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  });
+}
 
+export async function apiGetMe(
+  token?: string
+): Promise<ApiResponse<{ user: AuthUser }>> {
+  return request<{ user: AuthUser }>('/auth/me', {
+    method: 'GET',
+    headers: formatAuthHeaders(token),
+  });
+}
 

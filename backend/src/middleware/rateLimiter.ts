@@ -15,8 +15,10 @@ export function createRateLimiter(options: {
   windowMs: number;
   maxRequests: number;
   maxTrackedIps?: number;
+  skipTest?: boolean;
 }) {
   const maxTrackedIps = options.maxTrackedIps || 10000;
+  const shouldSkipTest = options.skipTest ?? true;
   const ipStore = new Map<string, RateLimitRecord>();
 
   // Periodically clean up stale client entries every 2 minutes
@@ -30,8 +32,8 @@ export function createRateLimiter(options: {
   }, 120000).unref();
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    // Skip rate limiting during automated test execution
-    if (process.env.NODE_ENV === 'test') {
+    // Skip rate limiting during automated test execution unless explicitly disabled for test
+    if (process.env.NODE_ENV === 'test' && shouldSkipTest) {
       return next();
     }
 

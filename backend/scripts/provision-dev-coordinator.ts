@@ -1,9 +1,10 @@
-import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { validateEnv } from '../src/config/env.js';
 import { createDatabaseConnection, closeDatabase } from '../src/database/connection.js';
 import { initializeSchema } from '../src/database/schema.js';
+
+export const DEFAULT_DEV_COORDINATOR_USERNAME = 'coord_assam_dev';
+export const DEFAULT_DEV_COORDINATOR_PASSWORD = 'SurakshaDev@2026';
 
 /**
  * Local Development Coordinator Provisioning Script
@@ -11,16 +12,19 @@ import { initializeSchema } from '../src/database/schema.js';
  * Safety & Security Guarantees:
  * 1. Strictly refuses to execute in production mode (NODE_ENV=production).
  * 2. Uses the identical environment configuration and SQLite database as the backend server.
- * 3. Creates the coordinator user 'coord_assam_dev' only if not already present.
+ * 3. Creates or updates the evaluation coordinator user 'coord_assam_dev'.
  * 4. Generates a genuine bcrypt hash with 10 salt rounds for the password_hash column.
- * 5. Discards the random password immediately; NEVER prints or stores plaintext passwords or JWT_SECRET.
- * 6. If the user already exists, preserves their existing credentials and role without modification.
- * 7. Confirms user presence in SQLite before minting an HS256 Bearer JWT with 1-hour expiry.
+ * 5. Supports overriding the evaluation password via DEV_COORDINATOR_PASSWORD env var.
+ * 6. Does NOT expose JWT_SECRET in source control or output.
+ * 7. Confirms user presence in SQLite with role 'coordinator'.
  */
-function provisionDevCoordinator(): void {
-  // 1. Refuse execution in production environment
-  if (process.env.NODE_ENV === 'production') {
-    console.error('[SECURITY ERROR] Script execution blocked: Cannot provision development coordinator when NODE_ENV=production.');
+export function provisionDevCoordinator(dbPath?: string, passwordOverride?: string): { username: string; role: string } {
+  // 1. Strictly require NODE_ENV to be explicitly set to 'development' or 'test' (fail-closed)
+  const rawNodeEnv = process.env.NODE_ENV ? process.env.NODE_ENV.trim() : '';
+  if (!rawNodeEnv || (rawNodeEnv !== 'development' && rawNodeEnv !== 'test')) {
+    console.error(
+      `[SECURITY ERROR] Script execution blocked: Cannot provision development coordinator unless NODE_ENV is explicitly set to "development" or "test" (received: "${rawNodeEnv || '<missing>'}").`
+    );
     process.exit(1);
   }
 
@@ -32,25 +36,25 @@ function provisionDevCoordinator(): void {
   }
 
   // 3. Connect to the active SQLite database
-  const db = createDatabaseConnection({ dbPath: config.DB_PATH });
+  const db = createDatabaseConnection({ dbPath: dbPath || config.DB_PATH });
 
   try {
     // Ensure migrations are initialized so tables exist
     initializeSchema(db);
 
-    const TARGET_USERNAME = 'coord_assam_dev';
+    const TARGET_USERNAME = DEFAULT_DEV_COORDINATOR_USERNAME;
+    const targetPassword = passwordOverride || process.env.DEV_COORDINATOR_PASSWORD || DEFAULT_DEV_COORDINATOR_PASSWORD;
+    const saltRounds = 10;
+    const passwordHash = bcrypt.hashSync(targetPassword, saltRounds);
 
     // 4. Check if coordinator account already exists
-    let user = db
+    const existingUser = db
       .prepare('SELECT id, username, role, full_name FROM users WHERE username = ? COLLATE NOCASE')
       .get(TARGET_USERNAME) as { id: number; username: string; role: string; full_name: string } | undefined;
 
-    if (!user) {
-      // 5. Generate a random password and genuine bcrypt hash
-      const randomSecret = crypto.randomBytes(24).toString('base64url');
-      const saltRounds = 10;
-      const passwordHash = bcrypt.hashSync(randomSecret, saltRounds);
+    let userId: number | bigint;
 
+    if (!existingUser) {
       const insertResult = db.prepare(`
         INSERT INTO users (username, password_hash, role, full_name, phone)
         VALUES (?, ?, 'coordinator', ?, ?)
@@ -60,75 +64,51 @@ function provisionDevCoordinator(): void {
         'Assam State EOC Coordinator (Dev)',
         '+919435012345'
       );
+      userId = insertResult.lastInsertRowid;
 
       console.log(`[PROVISION] Created new coordinator account in SQLite:`);
-      console.log(`  User ID  : ${insertResult.lastInsertRowid}`);
+      console.log(`  User ID  : ${userId}`);
       console.log(`  Username : ${TARGET_USERNAME}`);
       console.log(`  Role     : coordinator`);
       console.log(`  Full Name: Assam State EOC Coordinator (Dev)`);
-      console.log(`[SECURITY] Genuine bcrypt hash stored. Plaintext password discarded.\n`);
-
-      user = db
-        .prepare('SELECT id, username, role, full_name FROM users WHERE id = ?')
-        .get(insertResult.lastInsertRowid) as { id: number; username: string; role: string; full_name: string };
     } else {
-      console.log(`[FOUND] Existing coordinator account in SQLite:`);
-      console.log(`  User ID  : ${user.id}`);
-      console.log(`  Username : ${user.username}`);
-      console.log(`  Role     : ${user.role}`);
-      console.log(`  Full Name: ${user.full_name}`);
-      console.log(`[POLICY] Existing user credentials and role left unchanged.\n`);
+      db.prepare(`
+        UPDATE users
+        SET password_hash = ?, role = 'coordinator', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ?
+      `).run(passwordHash, existingUser.id);
+      userId = existingUser.id;
 
-      if (user.role !== 'coordinator' && user.role !== 'admin') {
-        console.error(`[ROLE CONFLICT] User '${TARGET_USERNAME}' does not possess coordinator/admin role in database.`);
-        process.exit(1);
-      }
+      console.log(`[PROVISION] Updated existing coordinator account in SQLite:`);
+      console.log(`  User ID  : ${userId}`);
+      console.log(`  Username : ${existingUser.username}`);
+      console.log(`  Role     : coordinator`);
     }
 
-    // 6. Confirm user existence in SQLite before minting token
-    const confirmedUser = db
-      .prepare('SELECT id, username, role, full_name FROM users WHERE id = ?')
-      .get(user.id) as { id: number; username: string; role: string; full_name: string } | undefined;
-
-    if (!confirmedUser) {
-      console.error(`[ERROR] Failed to confirm user ID ${user.id} in SQLite.`);
-      process.exit(1);
-    }
-
-    // 7. Mint HS256 Bearer JWT with 1-hour expiration
-    const token = jwt.sign(
-      {
-        id: confirmedUser.id,
-        sub: confirmedUser.id,
-        username: confirmedUser.username,
-        role: confirmedUser.role,
-        full_name: confirmedUser.full_name,
-      },
-      config.JWT_SECRET,
-      {
-        algorithm: 'HS256',
-        expiresIn: '1h',
-      }
-    );
-
-    // 8. Output token for local testing (Never print secrets or passwords)
+    console.log(`[SECURITY] Bcrypt password hash generated and stored securely in SQLite.\n`);
     console.log('================================================================');
-    console.log('  LOCAL DEV COORDINATOR BEARER TOKEN (VALID FOR 1 HOUR)');
+    console.log('  LOCAL DEV / HACKATHON EVALUATION COORDINATOR CREDENTIALS');
+    console.log('  (FOR LOCAL DEMONSTRATION & JUDGING ONLY — NEVER USE IN PRODUCTION)');
     console.log('================================================================');
-    console.log(token);
+    console.log(`  Username : ${TARGET_USERNAME}`);
+    console.log(`  Password : ${targetPassword}`);
     console.log('================================================================\n');
-    console.log('Usage Instructions:');
-    console.log('  1. In Frontend UI (http://localhost:5173):');
-    console.log('     Click "Public Mode (Set Token)" in the NGO Network page.');
-    console.log('     Paste this token and click "Apply Credentials".');
-    console.log('     Status will change to "Coordinator Key: Active".');
-    console.log('\n  2. In HTTP Requests (cURL / PowerShell):');
-    console.log('     Add header: Authorization: Bearer <TOKEN>');
+    console.log('How to Sign In:');
+    console.log('  1. In the Web UI (http://localhost:5173 or http://localhost:5174):');
+    console.log('     Click "Coordinator Login" in the header or NGO Network page.');
+    console.log(`     Sign in with username "${TARGET_USERNAME}" and your password.`);
+    console.log('  2. Via API:');
+    console.log('     POST /api/v1/auth/login');
+    console.log(`     Body: {"username": "${TARGET_USERNAME}", "password": "<password>"}`);
     console.log('================================================================\n');
+
+    return { username: TARGET_USERNAME, role: 'coordinator' };
   } finally {
     closeDatabase(db);
   }
 }
 
-provisionDevCoordinator();
-
+// Execute directly if run as CLI script
+if (process.argv[1] && process.argv[1].endsWith('provision-dev-coordinator.ts')) {
+  provisionDevCoordinator();
+}

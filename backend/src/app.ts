@@ -8,6 +8,7 @@ import { createIncidentRoutes } from './routes/incidentRoutes.js';
 import { createSyncRoutes } from './routes/syncRoutes.js';
 import { createNgoRoutes } from './routes/ngoRoutes.js';
 import { createRecommendationRoutes } from './routes/recommendationRoutes.js';
+import { createAuthRoutes, AuthRouteOptions } from './routes/authRoutes.js';
 import { createRateLimiter } from './middleware/rateLimiter.js';
 import { notFoundHandler, createErrorHandler } from './middleware/errorHandler.js';
 import { AppError } from './types/index.js';
@@ -16,6 +17,7 @@ export interface AppOptions {
   db: Database.Database;
   config?: EnvConfig;
   customRoutes?: (app: Express) => void;
+  authOptions?: AuthRouteOptions;
 }
 
 /**
@@ -79,6 +81,7 @@ export function createApp(options: AppOptions): Express {
   app.use(apiPrefix, createSyncRoutes(db));
   app.use(apiPrefix, createNgoRoutes(db, config.JWT_SECRET));
   app.use(apiPrefix, createRecommendationRoutes(db, config.JWT_SECRET));
+  app.use(apiPrefix, createAuthRoutes(db, config, options.authOptions));
 
   // Mount optional custom routes (e.g. For integration tests) before 404 handler
   if (options.customRoutes) {

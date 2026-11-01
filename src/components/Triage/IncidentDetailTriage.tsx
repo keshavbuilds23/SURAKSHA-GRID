@@ -23,6 +23,7 @@ interface IncidentDetailTriageProps {
   onNavigateToResources: () => void;
   coordinatorToken?: string | null;
   onNavigateToNgos?: (ngoId?: string) => void;
+  onOpenLogin?: () => void;
 }
 
 export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
@@ -36,6 +37,7 @@ export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
   onNavigateToResources,
   coordinatorToken,
   onNavigateToNgos,
+  onOpenLogin,
 }) => {
   const sevBadge =
     selectedIncident.severity === 'CRITICAL'
@@ -231,13 +233,21 @@ export const IncidentDetailTriage: React.FC<IncidentDetailTriageProps> = ({
                     <p className="text-[10px] text-slate-500 italic">"{selectedIncident.verification_notes}"</p>
                   )}
                 </div>
-              ) : (
+              ) : coordinatorToken ? (
                 <button
                   onClick={() => onVerifyIncident(selectedIncident.id)}
                   className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-medium py-2.5 rounded text-xs transition flex items-center justify-center space-x-2 shadow-xs cursor-pointer"
                 >
                   <CheckCircle className="w-4 h-4" />
                   <span>Verify Incident as Coordinator</span>
+                </button>
+              ) : (
+                <button
+                  onClick={onOpenLogin}
+                  className="w-full bg-teal-800 hover:bg-teal-900 text-white font-medium py-2.5 rounded text-xs transition flex items-center justify-center space-x-2 shadow-xs cursor-pointer"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Sign In as Coordinator to Verify</span>
                 </button>
               )}
             </div>

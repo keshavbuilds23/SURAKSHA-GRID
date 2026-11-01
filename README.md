@@ -85,7 +85,89 @@ SURAKSHA GRID is engineered with lightweight, resilient, and deterministic techn
 
 ---
 
-## 6. Project Documentation Index
+## 6. Quick Start & Judge Evaluation Guide
+
+Follow these steps to run the complete stack locally and evaluate all coordinator workflows.
+
+### 6.1 Prerequisites
+- **Node.js**: v18.0.0 or higher
+- **Package Manager**: `npm`
+
+---
+
+### 6.2 Installation & Server Startup
+
+#### Step 1: Start Backend (Port 5000)
+```bash
+cd backend
+cp .env.example .env            # Sets NODE_ENV=development and dev configuration
+npm install
+npm run provision:coordinator   # Provisions local SQLite db and evaluation coordinator
+npm run seed:demo               # Seeds demo NGO dossier (assam_relief_demo)
+npm run dev                     # Starts Express REST API at http://localhost:5000
+```
+
+#### Step 2: Start Frontend (Port 5173) in a second terminal
+```bash
+# In repository root:
+npm install
+npm run dev                     # Starts Vite React client at http://localhost:5173
+```
+
+---
+
+### 6.3 Local Evaluation Coordinator Credentials
+
+> [!NOTE]
+> **LOCAL DEMO CREDENTIALS ONLY**: These credentials are provided strictly for local hackathon judging and evaluation. In production deployments, coordinator accounts are provisioned exclusively through authorized command procedures and hashed using bcrypt.
+
+| Field | Evaluation Value | Notes |
+|---|---|---|
+| **Role** | `coordinator` | Full administrative verification and dispatch authority |
+| **Username** | `coord_assam_dev` | Case-insensitive identifier |
+| **Password** | `SurakshaDev@2026` | Configurable via `DEV_COORDINATOR_PASSWORD` env var |
+
+---
+
+### 6.4 How to Sign In & Test Privileged Features
+
+1. Open **`http://localhost:5173`** in your browser.
+2. The UI starts in **Public Mode** (`Role: Public`) with read-only access and privacy-redacted citizen/contact data.
+3. Click **"Coordinator Sign In"** in the top navigation bar (or in the **NGO Network** tab).
+4. Enter `coord_assam_dev` and `SurakshaDev@2026`.
+5. Click **"Sign In as Coordinator"**. The top bar updates to **`Coordinator Active`**, unlocking:
+   - **Incident Triage (`/details` tab)**: Review ground truth and confirm incidents via the coordinator verification gate.
+   - **NGO Network (`/ngos` tab)**:
+     - Register new partner NGOs.
+     - Inspect partner dossiers and manage staging depots, equipment inventory, and certified capabilities.
+     - Conduct 5-D audit verifications (`DOCUMENTED_IN_DDMP`, `IDENTITY_VERIFIED`, `CURRENTLY_OPERATIONAL`, `AVAILABILITY_CONFIRMED`, `EQUIPMENT_INDEPENDENTLY_VERIFIED`).
+     - Promote verified NGOs from simulated to operational status.
+   - **Recommendation Engine (Phase 4.5)**:
+     - In Incident Triage, click **"Match Partner NGOs"** to run explainable multi-criteria matching.
+     - Toggle between **Live Operational Match** and **Demo Simulation Match**.
+     - Inspect composite scores $(0-100)$, distance to nearest depots, and full justification audit bullets.
+6. To sign out, click the **"Logout"** button in the header bar.
+
+---
+
+### 6.5 Running Test Suites
+
+```bash
+# Run complete backend integration test suite (86 tests covering auth, RBAC, NGOs, recommendations):
+cd backend
+npm test
+
+# Run backend typecheck:
+npm run typecheck
+
+# Build frontend production bundle:
+cd ..
+npm run build
+```
+
+---
+
+## 7. Project Documentation Index
 
 Detailed specifications are maintained in the [`docs/`](file:///C:/Users/Keshav/OneDrive/Desktop/Timepass(Hackathon)/SURAKSHA-GRID/docs) directory:
 
@@ -114,7 +196,7 @@ Detailed specifications are maintained in the [`docs/`](file:///C:/Users/Keshav/
 
 ---
 
-## 7. License & Compliance
+## 8. License & Compliance
 
 This project is licensed under the terms of the [MIT License](file:///C:/Users/Keshav/OneDrive/Desktop/Timepass(Hackathon)/SURAKSHA-GRID/LICENSE).
 Developed for academic and competitive evaluation at the WHYCODE4U Hackathon 2026.

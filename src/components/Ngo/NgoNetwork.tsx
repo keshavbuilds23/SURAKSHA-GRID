@@ -26,6 +26,7 @@ import { NgoDetailDrawer } from './NgoDetailDrawer';
 interface NgoNetworkProps {
   coordinatorToken: string | null;
   onSetCoordinatorToken: (token: string | null) => void;
+  onOpenLogin?: () => void;
 }
 
 export interface TokenPayload {
@@ -59,6 +60,7 @@ export function parseJwtPayload(token: string | null): TokenPayload | null {
 export const NgoNetwork: React.FC<NgoNetworkProps> = ({
   coordinatorToken,
   onSetCoordinatorToken,
+  onOpenLogin,
 }) => {
   const [ngos, setNgos] = useState<NgoSummary[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
@@ -72,9 +74,6 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
 
   // Drawer & Modals
   const [selectedNgoId, setSelectedNgoId] = useState<string | null>(null);
-  const [isTokenModalOpen, setIsTokenModalOpen] = useState<boolean>(false);
-  const [tokenInput, setTokenInput] = useState<string>('');
-  const [tokenError, setTokenError] = useState<string | null>(null);
 
   // Register Modal State & Form Fields (Strictly matching createNgoSchema)
   const [isRegisterOpen, setIsRegisterOpen] = useState<boolean>(false);
@@ -142,37 +141,6 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
   useEffect(() => {
     loadDirectory();
   }, [loadDirectory]);
-
-  // Handle Token Save with defensive validation & sanitization
-  const handleSaveToken = (e: React.FormEvent) => {
-    e.preventDefault();
-    setTokenError(null);
-    const trimmed = tokenInput.trim().replace(/^Bearer\s+/i, '');
-    if (!trimmed) {
-      onSetCoordinatorToken(null);
-      setIsTokenModalOpen(false);
-      return;
-    }
-
-    const payload = parseJwtPayload(trimmed);
-    if (!payload) {
-      setTokenError('Invalid JWT format: Expected a 3-part base64url encoded Bearer token.');
-      return;
-    }
-
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      setTokenError('Token expired: This token has exceeded its 1-hour expiration. Run "npx tsx scripts/provision-dev-coordinator.ts" to mint a fresh token.');
-      return;
-    }
-
-    if (payload.role !== 'coordinator' && payload.role !== 'admin') {
-      setTokenError(`Role mismatch: Token actor role is '${payload.role || 'unknown'}'. Privileged NGO operations require 'coordinator' or 'admin' privileges.`);
-      return;
-    }
-
-    onSetCoordinatorToken(trimmed);
-    setIsTokenModalOpen(false);
-  };
 
   // Client-side field validation matching backend createNgoSchema
   const validateForm = (): boolean => {
@@ -343,34 +311,30 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center space-x-2.5">
-          {/* Coordinator Token Trigger */}
-          <button
-            onClick={() => {
-              setTokenInput(coordinatorToken || '');
-              setTokenError(null);
-              setIsTokenModalOpen(true);
-            }}
-            className={`px-3 py-1.5 rounded text-xs font-medium border flex items-center space-x-1.5 transition ${
-              isCoordinator
-                ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100'
-                : coordinatorToken && isTokenExpired
-                ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
-                : coordinatorToken && !hasCoordinatorRole
-                ? 'bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100'
-                : 'bg-slate-50 border-slate-300 text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-            <span>
-              {isCoordinator
-                ? `Coordinator: ${parsedToken?.username || 'Active'}`
-                : coordinatorToken && isTokenExpired
-                ? 'Coordinator Key: Expired'
-                : coordinatorToken && !hasCoordinatorRole
-                ? `Role: ${parsedToken?.role || 'Invalid'} (Locked)`
-                : 'Public Mode (Set Token)'}
-            </span>
-          </button>
+          {/* Coordinator Login / Status Trigger */}
+          {isCoordinator ? (
+            <div className="flex items-center space-x-1.5">
+              <span className="px-3 py-1.5 rounded text-xs font-semibold border bg-emerald-50 border-emerald-300 text-emerald-800 flex items-center space-x-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Coordinator: {parsedToken?.username || 'Active'}</span>
+              </span>
+              <button
+                onClick={() => onSetCoordinatorToken(null)}
+                className="px-2.5 py-1.5 rounded text-xs font-medium text-slate-600 hover:text-rose-700 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition cursor-pointer"
+                title="Sign out of coordinator session"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onOpenLogin}
+              className="px-3.5 py-1.5 rounded text-xs font-semibold border border-teal-700 bg-teal-50 hover:bg-teal-100 text-teal-900 flex items-center space-x-1.5 transition cursor-pointer shadow-2xs"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-teal-700" />
+              <span>Coordinator Sign In</span>
+            </button>
+          )}
 
           {/* Register Partner Button (Coordinator Only) */}
           {isCoordinator ? (
@@ -386,12 +350,12 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
             </button>
           ) : (
             <button
-              disabled
-              title="Requires verified coordinator JWT token"
-              className="bg-slate-100 text-slate-400 border border-slate-200 px-3.5 py-1.5 rounded font-medium text-xs flex items-center space-x-1.5 cursor-not-allowed"
+              onClick={onOpenLogin}
+              title="Sign in with coordinator credentials to register humanitarian partners"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-3.5 py-1.5 rounded font-medium text-xs flex items-center space-x-1.5 cursor-pointer transition"
             >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Register Partner (Locked)</span>
+              <Lock className="w-3.5 h-3.5 text-slate-500" />
+              <span>Register Partner (Sign In)</span>
             </button>
           )}
 
@@ -418,9 +382,9 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
           </div>
           <button
             onClick={() => onSetCoordinatorToken(null)}
-            className="text-emerald-900 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3"
+            className="text-emerald-900 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3 cursor-pointer"
           >
-            Clear Token (Switch to Public)
+            Sign Out (Switch to Public)
           </button>
         </div>
       ) : coordinatorToken && isTokenExpired ? (
@@ -428,18 +392,14 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
           <div className="flex items-center space-x-2">
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
-              <strong>Coordinator Token Expired:</strong> Your local development token has exceeded its 1-hour lifespan. Run <code>npx tsx scripts/provision-dev-coordinator.ts</code> to mint a fresh token.
+              <strong>Coordinator Session Expired:</strong> Your coordinator session has expired. Please sign in again.
             </span>
           </div>
           <button
-            onClick={() => {
-              setTokenInput('');
-              setTokenError(null);
-              setIsTokenModalOpen(true);
-            }}
-            className="text-amber-900 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3"
+            onClick={onOpenLogin}
+            className="text-amber-900 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3 cursor-pointer"
           >
-            Update Token
+            Sign In Again
           </button>
         </div>
       ) : coordinatorToken && !hasCoordinatorRole ? (
@@ -447,18 +407,14 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
           <div className="flex items-center space-x-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
             <span>
-              <strong>Insufficient Role Privileges:</strong> Active token belongs to <code>{parsedToken?.username || 'user'}</code> with role <code>'{parsedToken?.role || 'unknown'}'</code>. Coordinator privileges required.
+              <strong>Insufficient Role Privileges:</strong> Active session belongs to <code>{parsedToken?.username || 'user'}</code> with role <code>'{parsedToken?.role || 'unknown'}'</code>. Coordinator privileges required.
             </span>
           </div>
           <button
-            onClick={() => {
-              setTokenInput('');
-              setTokenError(null);
-              setIsTokenModalOpen(true);
-            }}
-            className="text-rose-900 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3"
+            onClick={onOpenLogin}
+            className="text-rose-900 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3 cursor-pointer"
           >
-            Switch to Coordinator
+            Switch Account
           </button>
         </div>
       ) : (
@@ -466,17 +422,14 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
           <div className="flex items-center space-x-2">
             <Lock className="w-4 h-4 text-slate-500 shrink-0" />
             <span>
-              <strong>Public Security Mode Active:</strong> Partner direct phone numbers, personal contact emails, and exact depot GPS coordinates are masked. Coordinator credentials required to audit or promote partners.
+              <strong>Public View:</strong> Read-only access with privacy-redacted contact details. Sign in as coordinator to register partners, audit 5-D verifications, and view staging logistics.
             </span>
           </div>
           <button
-            onClick={() => {
-              setTokenInput('');
-              setIsTokenModalOpen(true);
-            }}
-            className="text-teal-800 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3"
+            onClick={onOpenLogin}
+            className="text-teal-800 font-semibold hover:underline text-[11px] whitespace-nowrap ml-3 cursor-pointer"
           >
-            Authenticate Coordinator
+            Sign In as Coordinator
           </button>
         </div>
       )}
@@ -808,81 +761,8 @@ export const NgoNetwork: React.FC<NgoNetworkProps> = ({
           coordinatorToken={coordinatorToken}
           onClose={() => setSelectedNgoId(null)}
           onRefreshList={loadDirectory}
+          onOpenLogin={onOpenLogin}
         />
-      )}
-
-      {/* 9. COORDINATOR JWT TOKEN MODAL */}
-      {isTokenModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 flex items-center space-x-2">
-                <KeyRound className="w-4 h-4 text-teal-800" />
-                <span>Coordinator Session Credentials</span>
-              </h3>
-              <button
-                onClick={() => setIsTokenModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Privileged disaster coordination operations (5-D verification audits, operational promotion, and availability check-ins) require a cryptographically signed HMAC-SHA256 JWT token issued by the command EOC.
-            </p>
-
-            <form onSubmit={handleSaveToken} className="space-y-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Bearer Token (JWT)
-                </label>
-                <textarea
-                  rows={4}
-                  value={tokenInput}
-                  onChange={e => setTokenInput(e.target.value)}
-                  placeholder="Paste verified coordinator JWT here..."
-                  className="w-full border border-slate-300 rounded p-2 text-xs font-mono"
-                />
-              </div>
-
-              {tokenError && (
-                <div className="text-xs text-rose-700 bg-rose-50 p-2 rounded border border-rose-200">
-                  {tokenError}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2 pt-2">
-                {coordinatorToken && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onSetCoordinatorToken(null);
-                      setTokenInput('');
-                      setIsTokenModalOpen(false);
-                    }}
-                    className="px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-50 rounded border border-rose-200 transition"
-                  >
-                    Clear Token
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setIsTokenModalOpen(false)}
-                  className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded border border-slate-200 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 text-xs bg-teal-800 hover:bg-teal-900 text-white rounded font-medium transition cursor-pointer"
-                >
-                  Apply Credentials
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
       )}
 
       {/* 10. REGISTER NGO MODAL (COORDINATOR ONLY) */}
