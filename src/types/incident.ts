@@ -46,6 +46,7 @@ export interface Incident {
   // UI helpers
   medical_required?: boolean;
   follow_up_to_incident_id?: number | null;
+  is_simulated?: boolean;
 }
 
 export interface CreateIncidentPayload {

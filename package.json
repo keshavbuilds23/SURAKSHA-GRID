@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:backend": "npm --prefix backend run build",
+    "start": "node backend/dist/server.js",
     "preview": "vite preview"
   },
   "dependencies": {

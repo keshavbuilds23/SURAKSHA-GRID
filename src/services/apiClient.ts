@@ -42,7 +42,26 @@ export interface ApiResponse<T> {
   status: number;
 }
 
-const API_BASE_URL = '/api/v1';
+const PRODUCTION_API_BASE_URL = 'https://suraksha-grid-sbri.onrender.com/api/v1';
+
+const API_BASE_URL = (() => {
+  const metaEnv = (import.meta as { env?: Record<string, any> }).env;
+  const configured = metaEnv?.VITE_API_BASE_URL?.trim();
+
+  // 1. Explicit VITE_API_BASE_URL environment variable takes highest priority
+  if (configured) {
+    const clean = configured.replace(/\/+$/, '');
+    return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
+  }
+
+  // 2. In local Vite development mode, use relative /api/v1 for localhost:5000 proxy
+  if (metaEnv?.DEV) {
+    return '/api/v1';
+  }
+
+  // 3. In production mode (e.g. Vercel deployment), fall back to deployed Render backend
+  return PRODUCTION_API_BASE_URL;
+})();
 
 /**
  * Standard HTTP fetch wrapper with complete error code transformation

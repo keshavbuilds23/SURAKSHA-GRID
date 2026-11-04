@@ -1,8 +1,10 @@
 import express, { Express } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import Database from 'better-sqlite3';
-import { env, EnvConfig } from './config/env.js';
+import { env, EnvConfig, BACKEND_ROOT } from './config/env.js';
 import { createHealthRoutes } from './routes/healthRoutes.js';
 import { createIncidentRoutes } from './routes/incidentRoutes.js';
 import { createSyncRoutes } from './routes/syncRoutes.js';
@@ -28,8 +30,25 @@ export function createApp(options: AppOptions): Express {
   const { db, config = env } = options;
   const app = express();
 
-  // 1. Security Headers via Helmet
-  app.use(helmet());
+  // 1. Security Headers via Helmet (configured for single-origin SPA and MapLibre assets)
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          connectSrc: ["'self'", 'https:', 'blob:', 'data:'],
+          workerSrc: ["'self'", 'blob:'],
+          childSrc: ["'self'", 'blob:'],
+          fontSrc: ["'self'", 'https:', 'data:'],
+          objectSrc: ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    })
+  );
 
   // 2. CORS configuration bound strictly to environment configuration
   const rawOrigins = config.CORS_ORIGIN.split(',').map(o => o.trim());
@@ -88,10 +107,35 @@ export function createApp(options: AppOptions): Express {
     options.customRoutes(app);
   }
 
-  // 5. Unmatched Routes (404)
+  // 6. Explicit 404 handler for unmatched API routes under API_PREFIX
+  // Guarantees API 404s return JSON error envelopes instead of HTML
+  app.use(apiPrefix, notFoundHandler);
+
+  // 7. Static Frontend Assets & SPA Fallback (Production Single-Service Hosting)
+  const clientDistDir = path.resolve(BACKEND_ROOT, '../dist');
+  if (fs.existsSync(clientDistDir)) {
+    // Serve pre-built static client assets (JS bundles, CSS, images)
+    app.use(express.static(clientDistDir));
+
+    // Catch-all GET handler to serve index.html for client-side React Router navigation
+    app.get('*', (req, res, next) => {
+      // Defensive check: never serve HTML for API prefix
+      if (req.originalUrl.startsWith(apiPrefix)) {
+        return notFoundHandler(req, res, next);
+      }
+      const indexHtmlPath = path.join(clientDistDir, 'index.html');
+      if (fs.existsSync(indexHtmlPath)) {
+        res.sendFile(indexHtmlPath);
+      } else {
+        next();
+      }
+    });
+  }
+
+  // 8. Unmatched Non-API Routes (when static files not present or non-GET requests)
   app.use(notFoundHandler);
 
-  // 6. Centralized Error Handler
+  // 9. Centralized Error Handler
   app.use(createErrorHandler(config.NODE_ENV));
 
   return app;

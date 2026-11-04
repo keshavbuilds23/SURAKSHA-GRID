@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl, { Map as MapLibreMap, Marker, NavigationControl } from 'maplibre-gl';
-import { Search, Filter, Layers, Navigation, ExternalLink, AlertTriangle, LifeBuoy } from 'lucide-react';
+import { Search, Filter, Layers, Navigation, ExternalLink, AlertTriangle, LifeBuoy, Map as MapIcon, Satellite } from 'lucide-react';
 import { Incident } from '../../types/incident';
 import { Resource } from '../../types/resource';
 import { ASSAM_DISTRICTS_GEOJSON } from '../../mocks/assamGeoJSON';
@@ -26,11 +26,22 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<{ [id: number]: Marker }>({});
 
+  const [basemapMode, setBasemapMode] = useState<'normal' | 'satellite'>('normal');
+  const [satelliteLoadError, setSatelliteLoadError] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [showDepots, setShowDepots] = useState<boolean>(true);
   const [showFloodPolygons, setShowFloodPolygons] = useState<boolean>(true);
+
+  // Helper to distinguish simulated mock test records from verified operational field reports
+  const isIncidentSimulated = (inc: Incident): boolean => {
+    return Boolean(
+      inc.is_simulated ||
+      (inc.landmark && inc.landmark.includes('[SIMULATED DEMO]')) ||
+      (inc.id >= 101 && inc.id <= 108)
+    );
+  };
 
   // Filtered incidents
   const filteredIncidents = incidents.filter(i => {
@@ -49,16 +60,27 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    // Professional clean enterprise cartographic style
+    // Cartographic style supporting both Normal OpenStreetMap and Esri World Imagery Satellite basemaps
     const mapStyle: maplibregl.StyleSpecification = {
       version: 8,
-      name: 'Suraksha Professional Light',
+      name: 'Suraksha Professional Cartography',
       sources: {
         osm_raster: {
           type: 'raster',
           tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
           tileSize: 256,
           attribution: '© OpenStreetMap contributors',
+          maxzoom: 19,
+        },
+        esri_satellite_raster: {
+          type: 'raster',
+          tiles: [
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          ],
+          tileSize: 256,
+          attribution:
+            'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+          maxzoom: 18,
         },
         assam_basin: {
           type: 'geojson',
@@ -67,7 +89,7 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
       },
       layers: [
         {
-          id: 'enterprise_light_bg',
+          id: 'map_bg',
           type: 'background',
           paint: {
             'background-color': '#f8fafc',
@@ -77,9 +99,23 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
           id: 'osm_tiles_layer',
           type: 'raster',
           source: 'osm_raster',
+          layout: {
+            visibility: 'visible',
+          },
           paint: {
             'raster-opacity': 0.88,
             'raster-saturation': -0.15,
+          },
+        },
+        {
+          id: 'esri_satellite_layer',
+          type: 'raster',
+          source: 'esri_satellite_raster',
+          layout: {
+            visibility: 'none',
+          },
+          paint: {
+            'raster-opacity': 1.0,
           },
         },
         {
@@ -100,7 +136,7 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
               '#334155',
               '#64748b',
             ],
-            'fill-opacity': 0.22,
+            'fill-opacity': 0.25,
           },
         },
         {
@@ -122,7 +158,7 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
               '#64748b',
             ],
             'line-width': 2,
-            'line-opacity': 0.75,
+            'line-opacity': 0.85,
           },
         },
       ],
@@ -131,10 +167,23 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
       style: mapStyle,
-      center: [94.1741, 26.9532], // Upper Assam / Majuli Island center
+      center: [94.1741, 26.9532], // Upper Assam / Majuli Island center ([longitude, latitude])
       zoom: 8.4,
       pitch: 0,
       attributionControl: false,
+    });
+
+    // Gracefully handle satellite tile loading failures
+    map.on('error', (e) => {
+      const errStr = String(e?.error?.message || e?.error || '');
+      const sourceId = (e as any)?.sourceId;
+      if (
+        sourceId === 'esri_satellite_raster' ||
+        errStr.toLowerCase().includes('arcgisonline') ||
+        errStr.toLowerCase().includes('world_imagery')
+      ) {
+        setSatelliteLoadError(true);
+      }
     });
 
     map.addControl(new NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
@@ -146,6 +195,39 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
       mapRef.current = null;
     };
   }, []);
+
+  // Update Basemap mode (Normal vs Satellite) by toggling raster layers without recreating the map
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const applyBasemap = () => {
+      if (map.getLayer('osm_tiles_layer')) {
+        map.setLayoutProperty('osm_tiles_layer', 'visibility', basemapMode === 'normal' ? 'visible' : 'none');
+      }
+      if (map.getLayer('esri_satellite_layer')) {
+        map.setLayoutProperty('esri_satellite_layer', 'visibility', basemapMode === 'satellite' ? 'visible' : 'none');
+      }
+      if (map.getLayer('map_bg')) {
+        map.setPaintProperty('map_bg', 'background-color', basemapMode === 'satellite' ? '#0b132b' : '#f8fafc');
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      applyBasemap();
+    } else {
+      map.once('load', applyBasemap);
+    }
+  }, [basemapMode]);
+
+  // Handle switching basemaps
+  const handleBasemapChange = (mode: 'normal' | 'satellite') => {
+    if (mode === basemapMode) return;
+    setBasemapMode(mode);
+    if (mode === 'normal') {
+      setSatelliteLoadError(false);
+    }
+  };
 
   // Update Flood Polygons visibility
   useEffect(() => {
@@ -238,11 +320,11 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
     }
   }, [filteredIncidents, resources, selectedIncidentId, showDepots, onSelectIncident, onNavigateToResources]);
 
-  // Center on selected incident
+  // Center on selected incident (only if coordinates were actually submitted)
   const handleFlyToIncident = (inc: Incident) => {
     onSelectIncident(inc.id);
     const map = mapRef.current;
-    if (map && inc.longitude && inc.latitude) {
+    if (map && inc.longitude != null && inc.latitude != null) {
       map.flyTo({
         center: [inc.longitude, inc.latitude],
         zoom: 11,
@@ -357,13 +439,18 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <div className="flex items-center space-x-1.5">
+                    <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
                       <span className={`px-1.5 py-0.5 rounded font-semibold text-[10px] border ${sevBadge}`}>
                         {inc.severity}
                       </span>
                       <span className={`text-[10px] px-1.5 py-0.2 rounded border ${statusBadge}`}>
                         {inc.verification_status}
                       </span>
+                      {isIncidentSimulated(inc) && (
+                        <span className="text-[9px] px-1 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono font-medium">
+                          SIMULATED
+                        </span>
+                      )}
                     </div>
                     <span className="text-slate-500 font-mono text-[11px]">#{inc.id}</span>
                   </div>
@@ -373,10 +460,17 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
 
                   <div className="flex justify-between items-center text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-200 font-mono">
                     <span>Affected: <strong className="text-slate-800">{inc.affected_count}</strong></span>
-                    <span className="text-teal-800 flex items-center space-x-1 font-medium">
-                      <Navigation className="w-2.5 h-2.5" />
-                      <span>Fly to marker</span>
-                    </span>
+                    {inc.latitude != null && inc.longitude != null ? (
+                      <span className="text-teal-800 flex items-center space-x-1 font-medium">
+                        <Navigation className="w-2.5 h-2.5" />
+                        <span>Fly to marker</span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[10px] font-sans font-medium flex items-center space-x-0.5">
+                        <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                        <span>No GPS Coords</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -396,8 +490,41 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
             </span>
           </div>
 
-          {/* Layer toggles and controls */}
-          <div className="flex items-center space-x-2 text-xs">
+          {/* Layer toggles, Basemap Switcher and controls */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {/* Basemap Switcher (Normal Map vs Satellite View) */}
+            <div className="inline-flex rounded bg-slate-100 p-0.5 border border-slate-200" role="group" aria-label="Basemap selection">
+              <button
+                type="button"
+                onClick={() => handleBasemapChange('normal')}
+                className={`px-2.5 py-1 text-xs rounded transition flex items-center space-x-1.5 ${
+                  basemapMode === 'normal'
+                    ? 'bg-white text-slate-900 font-semibold shadow-xs border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900 font-medium'
+                }`}
+                title="Switch to standard cartographic normal map"
+                aria-pressed={basemapMode === 'normal'}
+              >
+                <MapIcon className="w-3.5 h-3.5 text-slate-600" />
+                <span>Normal Map</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleBasemapChange('satellite')}
+                className={`px-2.5 py-1 text-xs rounded transition flex items-center space-x-1.5 ${
+                  basemapMode === 'satellite'
+                    ? 'bg-teal-800 text-white font-semibold shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 font-medium'
+                }`}
+                title="Switch to satellite earth observation imagery"
+                aria-pressed={basemapMode === 'satellite'}
+              >
+                <Satellite className="w-3.5 h-3.5" />
+                <span>Satellite View</span>
+              </button>
+            </div>
+
             <button
               onClick={() => setShowFloodPolygons(prev => !prev)}
               className={`px-2 py-1 rounded border transition flex items-center space-x-1 ${
@@ -436,15 +563,48 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
           <div ref={mapContainerRef} className="w-full h-full" />
 
           {/* Offline/Online Map Capability Disclosure Callout */}
-          <div className="absolute top-3 left-3 bg-white/95 border border-slate-200 px-3 py-1.5 rounded backdrop-blur text-[11px] text-slate-600 flex items-center space-x-2 z-10 shadow-xs font-mono">
-            <span className="w-2 h-2 rounded-full bg-teal-600"></span>
-            <span>Vector GeoJSON Basin: Local & Offline-Ready</span>
+          <div className="absolute top-3 left-3 bg-white/95 border border-slate-200 px-3 py-1.5 rounded backdrop-blur text-[11px] text-slate-600 flex items-center space-x-2 z-10 shadow-xs font-mono max-w-[80%] sm:max-w-none">
+            <span className={`w-2 h-2 rounded-full ${basemapMode === 'satellite' ? 'bg-indigo-600' : 'bg-teal-600'}`}></span>
+            {basemapMode === 'satellite' ? (
+              <span>Basemap: Satellite Imagery (Archival Earth Observation — Not Real-Time)</span>
+            ) : (
+              <span>Vector GeoJSON Basin: Local & Offline-Ready | Basemap: Normal (OSM)</span>
+            )}
           </div>
+
+          {/* Satellite Tile Loading Failure Alert with graceful fallback */}
+          {satelliteLoadError && basemapMode === 'satellite' && (
+            <div className="absolute top-12 left-3 right-3 sm:right-auto sm:max-w-md bg-amber-50/95 border border-amber-300 text-amber-900 p-2.5 rounded shadow-md text-xs flex items-start space-x-2 z-20 backdrop-blur">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-amber-950">Satellite Imagery Tile Load Warning</p>
+                <p className="text-[11px] text-amber-800 mt-0.5">
+                  Some satellite tiles could not be fetched (network offline or tile server unreachable). The normal cartographic basemap and offline vector basin polygons remain fully functional.
+                </p>
+                <div className="mt-2 flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      handleBasemapChange('normal');
+                    }}
+                    className="px-2 py-0.5 bg-amber-200 hover:bg-amber-300 text-amber-950 rounded font-medium text-[11px] transition"
+                  >
+                    Fallback to Normal Map
+                  </button>
+                  <button
+                    onClick={() => setSatelliteLoadError(false)}
+                    className="text-[11px] text-slate-600 hover:text-slate-800 underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Floating Selected Incident Card */}
           {selectedIncident && (
-            <div className="absolute bottom-4 left-4 right-4 md:right-auto md:max-w-md bg-white/95 border border-slate-200 p-4 rounded-lg shadow-lg backdrop-blur z-10 space-y-2.5">
-              <div className="flex items-center justify-between">
+            <div className="absolute bottom-10 left-3 right-3 sm:bottom-4 sm:left-4 sm:right-auto sm:max-w-md bg-white/95 border border-slate-200 p-4 rounded-lg shadow-lg backdrop-blur z-10 space-y-2.5">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center space-x-2">
                   <span
                     className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
@@ -458,11 +618,25 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
                     {selectedIncident.severity}
                   </span>
                   <span className="text-xs font-bold text-slate-900 font-mono">#{selectedIncident.id}</span>
-                  <span className="text-xs text-slate-600 truncate max-w-[200px]">{selectedIncident.landmark}</span>
+                  <span className="text-xs text-slate-600 truncate max-w-[160px] sm:max-w-[200px]">
+                    {selectedIncident.landmark}
+                  </span>
                 </div>
-                <span className="text-[11px] font-mono text-slate-500">
-                  {selectedIncident.latitude?.toFixed(4)}°N, {selectedIncident.longitude?.toFixed(4)}°E
-                </span>
+                {selectedIncident.latitude != null && selectedIncident.longitude != null ? (
+                  <span className="text-[11px] font-mono text-slate-500 whitespace-nowrap">
+                    {selectedIncident.latitude.toFixed(4)}°N, {selectedIncident.longitude.toFixed(4)}°E
+                    {isIncidentSimulated(selectedIncident) && (
+                      <span className="ml-1 text-[9px] text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200">
+                        SIMULATED
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-sans text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 flex items-center space-x-1">
+                    <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                    <span>No Coordinates Submitted</span>
+                  </span>
+                )}
               </div>
 
               <div className="text-xs font-semibold text-slate-900 leading-snug">
@@ -521,6 +695,19 @@ export const LiveIncidentMap: React.FC<LiveIncidentMapProps> = ({
               <span className="w-2.5 h-2.5 rounded bg-teal-800"></span>
               <span className="text-slate-600">Relief Staging Depot</span>
             </div>
+          </div>
+
+          {/* Dynamic Basemap & Source Attribution Bar */}
+          <div className="absolute bottom-1 right-1 sm:bottom-2 sm:right-2 bg-white/90 border border-slate-200/80 px-2 py-0.5 rounded text-[10px] text-slate-600 backdrop-blur z-10 shadow-xs max-w-[85%] sm:max-w-md pointer-events-auto leading-tight truncate">
+            {basemapMode === 'satellite' ? (
+              <span>
+                Satellite: <strong>Tiles © Esri</strong> — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community | Archival Earth Observation (Not Real-Time)
+              </span>
+            ) : (
+              <span>
+                Basemap: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-slate-900">OpenStreetMap</a> contributors | Vector: Local Basin GeoJSON
+              </span>
+            )}
           </div>
         </div>
       </div>
